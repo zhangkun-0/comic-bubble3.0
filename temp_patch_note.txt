@@ -1,0 +1,2 @@
+Patch: change export button to dispatcher and add export functions.
+Note: we'll edit src/main.js in-place.

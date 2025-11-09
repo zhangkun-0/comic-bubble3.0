@@ -437,7 +437,7 @@ function attachEvents() {
   elements.textContent?.addEventListener('input', handleTextInput);
   elements.outerTextContent?.addEventListener('input', handleOuterTextInput);
   elements.outerTextStyle?.addEventListener('click', handleOuterTextStyleToggle);
-  elements.exportButton?.addEventListener('click', pro5_exportPNG);
+  elements.exportButton?.addEventListener('click', pro5_handleExport);
 
   elements.viewport?.addEventListener('wheel', handleWheel, { passive: false });
   elements.viewport?.addEventListener('pointerdown', handleViewportPointerDown);
@@ -4793,6 +4793,237 @@ async function pro5_exportJPG(quality = 1.0) {
   const url = canvas.toDataURL('image/jpeg', quality);
   const a = document.createElement('a');
   a.href = url; a.download = 'export.jpg'; a.click();
+}
+
+// Dispatcher: choose export based on UI select
+async function pro5_handleExport() {
+  const format = (elements.exportFormat && elements.exportFormat.value) || 'png';
+  if (format === 'png') {
+    await pro5_exportPNG();
+    return;
+  }
+  if (format === 'jpg' || format === 'jpeg') {
+    await pro5_exportJPG(0.95);
+    return;
+  }
+  if (format === 'psd') {
+    try {
+      await exportPsdWithAgPsd();
+      return;
+    } catch (err) {
+      // If ag-psd path fails at runtime, fallback to existing raster PSD exporter
+      console.warn('ag-psd export failed, falling back to raster PSD export:', err);
+      await exportPsd();
+      return;
+    }
+  }
+  // default
+  await pro5_exportPNG();
+}
+
+// Minimal ag-psd exporter attempt: dynamic import and best-effort PSD with text layers.
+// On any runtime error this function throws so caller can fallback to raster PSD.
+async function exportPsdWithAgPsd() {
+  const moduleUrl = 'https://unpkg.com/ag-psd@latest/dist/ag-psd.esm.js';
+  const ag = await import(moduleUrl);
+  const writePsd = ag.writePsd || ag.default?.writePsd;
+  if (!writePsd) throw new Error('ag-psd writePsd not found');
+  const { createCanvas, Canvas } = await import('https://unpkg.com/canvas-for-psd');
+
+  const width = state.canvas.width;
+  const height = state.canvas.height;
+
+  // Build PSD structure with proper layer order and complete metadata
+  const children = [];
+
+  // 1) Background layer (if exists)
+  if (state.image && state.image.src) {
+    const baseCanvas = document.createElement('canvas');
+    baseCanvas.width = width;
+    baseCanvas.height = height;
+    const baseCtx = baseCanvas.getContext('2d');
+    baseCtx.drawImage(elements.baseImage, 0, 0, width, height);
+    const baseData = baseCtx.getImageData(0, 0, width, height);
+    children.push({
+      name: '底图',
+      top: 0, left: 0, right: width, bottom: height,
+      opacity: 255,
+      channels: [{}, {}, {}, {}],
+      imageData: { width, height, data: new Uint8Array(baseData.data.buffer.slice(0)) }
+    });
+  }
+
+  // 2) Panel frames and their images
+  const pf = state.pageFrame;
+  if (pf?.active && Array.isArray(pf.panels)) {
+    for (const panel of pf.panels) {
+      // Panel image layer (if exists)
+      if (panel.image && panel.image.src) {
+        const pCanvas = document.createElement('canvas');
+        pCanvas.width = width;
+        pCanvas.height = height;
+        const pCtx = pCanvas.getContext('2d');
+        
+        // Clip to panel bounds
+        pCtx.save();
+        pCtx.beginPath();
+        pCtx.rect(panel.x, panel.y, panel.width, panel.height);
+        pCtx.clip();
+
+        // Draw panel image with transforms
+        const img = new Image();
+        img.src = panel.image.src;
+        const scale = panel.image.scale ?? 1;
+        const rotDeg = panel.image.rotation ?? 0;
+        const offX = panel.image.offsetX ?? 0;
+        const offY = panel.image.offsetY ?? 0;
+
+        const cx = panel.x + panel.width / 2 + offX;
+        const cy = panel.y + panel.height / 2 + offY;
+
+        pCtx.translate(cx, cy);
+        pCtx.rotate((rotDeg * Math.PI) / 180);
+        pCtx.scale(scale, scale);
+        pCtx.drawImage(img, -img.width/2, -img.height/2, img.width, img.height);
+        pCtx.restore();
+
+        const pData = pCtx.getImageData(0, 0, width, height);
+        children.push({
+          name: `格内图-${panel.id}`,
+          top: 0, left: 0, right: width, bottom: height,
+          opacity: 255,
+          channels: [{}, {}, {}, {}],
+          imageData: { width, height, data: new Uint8Array(pData.data.buffer.slice(0)) }
+        });
+      }
+
+      // Panel frame layer
+      const frameCanvas = document.createElement('canvas');
+      frameCanvas.width = width;
+      frameCanvas.height = height;
+      const frameCtx = frameCanvas.getContext('2d');
+      frameCtx.strokeStyle = '#10131c';
+      frameCtx.lineWidth = pf.lineWidth || 4;
+      frameCtx.strokeRect(panel.x, panel.y, panel.width, panel.height);
+      const frameData = frameCtx.getImageData(0, 0, width, height);
+      children.push({
+        name: `格框-${panel.id}`,
+        top: Math.round(panel.y),
+        left: Math.round(panel.x),
+        right: Math.round(panel.x + panel.width),
+        bottom: Math.round(panel.y + panel.height),
+        opacity: 255,
+        visible: true,
+        clipping: false,
+        channels: [{}, {}, {}, {}],
+        imageData: { width, height, data: new Uint8Array(frameData.data.buffer.slice(0)) }
+      });
+    }
+  }
+
+  // 3) Speech bubbles and text layers
+  if (Array.isArray(state.bubbles)) {
+    for (const bubble of state.bubbles) {
+      // Bubble shape layer
+      const bubbleCanvas = document.createElement('canvas');
+      bubbleCanvas.width = width;
+      bubbleCanvas.height = height;
+      const bubbleCtx = bubbleCanvas.getContext('2d');
+      drawBubblesToContext(bubbleCtx, { includeText: false, includeBodies: true });
+      const bubbleData = bubbleCtx.getImageData(0, 0, width, height);
+      children.push({
+        name: `气泡-${bubble.id}`,
+        top: 0, left: 0, right: width, bottom: height,
+        opacity: 255,
+        channels: [{}, {}, {}, {}],
+        imageData: { width, height, data: new Uint8Array(bubbleData.data.buffer.slice(0)) }
+      });
+
+      // Text layer with enhanced metadata for Photoshop compatibility
+      const text = pro5_getBubbleText(bubble);
+      if (text) {
+        const rect = getTextRect(bubble);
+        if (rect) {
+          const lines = pro5_domWrapLines(text, bubble.fontFamily, bubble.fontSize, bubble.bold, Math.max(1, Math.round(rect.width)), state.pro5_autoWrapEnabled);
+          const display = lines.join('\n');
+          const colorHex = getBubbleTextColor(bubble);
+          const toRgb = (h) => { if(!h) return {r:0,g:0,b:0}; h=String(h).replace('#',''); if(h.length===3) return {r:parseInt(h[0]+h[0],16),g:parseInt(h[1]+h[1],16),b:parseInt(h[2]+h[2],16)}; return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)} };
+          const { r, g, b } = toRgb(colorHex);
+
+          // Enhanced text layer structure for better Photoshop compatibility
+          const textLayer = {
+            name: `文字-${bubble.id}`,
+            top: Math.round(rect.y),
+            left: Math.round(rect.x),
+            right: Math.round(rect.x + rect.width),
+            bottom: Math.round(rect.y + rect.height),
+            opacity: 255,
+            visible: true,
+            clipping: false,
+            type: 'textLayer',
+            text: {
+              text: display,
+              transform: { xx: 1, xy: 0, yx: 0, yy: 1, tx: Math.round(rect.x), ty: Math.round(rect.y) },
+              style: {
+                font: {
+                  name: bubble.fontFamily || state.fontFamily,
+                  sizes: [bubble.fontSize || state.fontSize],
+                  colors: [[r, g, b]],
+                  alignment: ['center']
+                },
+                fontSize: bubble.fontSize || state.fontSize,
+                fontFamily: bubble.fontFamily || state.fontFamily,
+                fontWeight: bubble.bold ? 'bold' : 'normal',
+                fillColor: { r, g, b },
+                justification: 'center'
+              },
+              engine: {
+                version: 50,
+                descriptionVersion: 2,
+                leading: Math.round((bubble.lineHeight || Math.round((bubble.fontSize||state.fontSize) * 1.2))),
+                tracking: 0,
+                textGridding: 'none',
+                paragraphStyle: { justification: 2 },
+                writingDirection: 0,
+                fontPostScriptName: bubble.fontFamily || state.fontFamily,
+                renderingIntent: 2
+              },
+              warp: {
+                style: 'none',
+                value: 0,
+                perspective: 0,
+                perspectiveOther: 0,
+                rotate: 0
+              }
+            }
+          };
+          children.push(textLayer);
+        }
+      }
+    }
+  }
+
+  const psdObj = {
+    width,
+    height,
+    children,
+    channelsInColor: true,
+    colorMode: 3, // RGB
+    depth: 8,
+    bitsPerChannel: 8,
+    transparencyProtected: false,
+    hidden: false,
+  };
+
+  try {
+    const out = writePsd(psdObj);
+    const buffer = out instanceof ArrayBuffer ? out : (out && out.buffer ? out.buffer : out);
+    if (!buffer) throw new Error('ag-psd returned no buffer');
+    downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), 'comic-bubbles.psd');
+  } catch (err) {
+    console.error('PSD export error:', err);
+    throw err;
+  }
 }
 
 
