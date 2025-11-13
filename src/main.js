@@ -28,6 +28,7 @@ const elements = {
   outerTextStyle: document.getElementById('outer-text-style'),
   exportFormat: document.getElementById('export-format'),
   exportButton: document.getElementById('export'),
+  languageToggle: document.getElementById('language-toggle'),
   measureBox: document.getElementById('measure-box'),
   panelLayer: document.getElementById('panel-layer'),
   panelSvg: document.getElementById('panel-svg'),
@@ -117,6 +118,142 @@ const panelOverlayState = {
   handles: new Map(),
 };
 
+const languageState = {
+  current: 'zh',
+};
+
+const I18N_STRINGS = {
+  appTitle: { zh: '漫画气泡', en: 'Comic Bubbles' },
+  appHeading: { zh: '漫画气泡', en: 'Comic Bubbles' },
+  importImage: { zh: '导入图片', en: 'Import Image' },
+  bubbleTypeLabel: { zh: '对话框选择', en: 'Bubble Type' },
+  bubbleOptionSpeech: { zh: '对白气泡', en: 'Speech Bubble' },
+  bubbleOptionThought: { zh: '思想气泡', en: 'Thought Bubble' },
+  bubbleOptionCombo: { zh: '组合气泡', en: 'Combo Bubble' },
+  bubbleOptionRectangle: { zh: '矩形气泡', en: 'Rectangle Bubble' },
+  bubbleOptionShout: { zh: '喊叫气泡', en: 'Shout Bubble' },
+  strokeWidthLabel: { zh: '对话框粗细', en: 'Bubble Stroke Width' },
+  insertBubble: { zh: '插入对话框', en: 'Insert Bubble' },
+  removeBubble: { zh: '删除对话框', en: 'Delete Bubble' },
+  placeBubble: { zh: '放入漫画格', en: 'Place into Panel' },
+  panelSectionTitle: { zh: '漫画分格', en: 'Comic Panels' },
+  panelImageRotationLabel: { zh: '格框内图片旋转', en: 'Panel Image Rotation' },
+  panelHint: {
+    zh: '在漫画页框内ctrl+鼠标左键拖拽可切分格框，鼠标左键拖动画格，右键拖动格内图。',
+    en: 'Inside the comic page, press Ctrl and drag with the left mouse button to split panels. Drag with the left button to move panels and with the right button to move images.',
+  },
+  panelMarginHorizontalLabel: { zh: '漫画页框左右间距', en: 'Page Frame Horizontal Margin' },
+  panelMarginVerticalLabel: { zh: '漫画页框上下间距', en: 'Page Frame Vertical Margin' },
+  panelLineWidthLabel: { zh: '漫画格框线条', en: 'Panel Border Width' },
+  panelGapHorizontalLabel: { zh: '横向间隙', en: 'Horizontal Gap' },
+  panelGapVerticalLabel: { zh: '纵向间隙', en: 'Vertical Gap' },
+  panelFrameColorLabel: { zh: '格框外部颜色', en: 'Frame Color' },
+  panelFrameWhite: { zh: '白色', en: 'White' },
+  panelFrameBlack: { zh: '黑色', en: 'Black' },
+  placeholderText: { zh: '请先导入漫画图片', en: 'Please import a comic image first' },
+  fontFamilyLabel: { zh: '文字选择', en: 'Font Family' },
+  fontOptionYaHei: { zh: '微软雅黑', en: 'Microsoft YaHei' },
+  fontOptionHei: { zh: '黑体', en: 'SimHei' },
+  fontOptionSimSun: { zh: '新宋体', en: 'NSimSun' },
+  fontSizeLabel: { zh: '字号', en: 'Font Size' },
+  toggleBold: { zh: '字体加粗', en: 'Bold Text' },
+  textContentLabel: { zh: '框内输入', en: 'Bubble Text' },
+  outerTextContentLabel: { zh: '框外输入', en: 'Free Text' },
+  outerTextStyle: { zh: '白字黑边', en: 'White Text with Black Outline' },
+  exportFormatLabel: { zh: '导出选项', en: 'Export Options' },
+  exportButton: { zh: '导出图片', en: 'Export Image' },
+  languageToggle: { zh: 'English', en: '中文' },
+  typographyTitle: { zh: '文本排版', en: 'Typography' },
+  paddingLabel: { zh: '文字距边框（四挡）', en: 'Text Padding (4 levels)' },
+  autoWrap: { zh: '自动换行', en: 'Auto Wrap' },
+  charsPerLine: { zh: '每行字数（4~10）', en: 'Characters per Line (4-10)' },
+  zoomIndicator: { zh: '缩放：{value}%', en: 'Zoom: {value}%' },
+  positionIndicatorBubble: {
+    zh: '位置：({x}, {y}) 尺寸：{width}×{height}',
+    en: 'Position: ({x}, {y}) Size: {width}×{height}',
+  },
+  positionIndicatorFreeText: {
+    zh: '位置：({x}, {y}) 旋转：{rotation}°',
+    en: 'Position: ({x}, {y}) Rotation: {rotation}°',
+  },
+};
+
+function t(key, replacements = {}) {
+  const entry = I18N_STRINGS[key];
+  if (!entry) return '';
+  const template = entry[languageState.current] ?? entry.zh ?? '';
+  return template.replace(/\{(\w+)\}/g, (match, token) => {
+    if (Object.prototype.hasOwnProperty.call(replacements, token)) {
+      const value = replacements[token];
+      return value != null ? String(value) : '';
+    }
+    return '';
+  });
+}
+
+function formatIndicatorNumber(value) {
+  return Number(value ?? 0).toFixed(0);
+}
+
+function updateZoomIndicator(zoom) {
+  if (!elements.zoomIndicator) return;
+  const percent = Math.round((zoom ?? 0) * 100);
+  elements.zoomIndicator.textContent = t('zoomIndicator', { value: percent });
+}
+
+function setBubblePositionIndicator(bubble) {
+  if (!elements.positionIndicator) return;
+  if (!bubble) {
+    if (!getSelectedFreeText()) {
+      elements.positionIndicator.textContent = '';
+    }
+    return;
+  }
+  elements.positionIndicator.textContent = t('positionIndicatorBubble', {
+    x: formatIndicatorNumber(bubble.x),
+    y: formatIndicatorNumber(bubble.y),
+    width: formatIndicatorNumber(bubble.width),
+    height: formatIndicatorNumber(bubble.height),
+  });
+}
+
+function refreshPositionIndicator() {
+  const bubble = getSelectedBubble();
+  if (bubble) {
+    setBubblePositionIndicator(bubble);
+    return;
+  }
+  updateFreeTextIndicator(getSelectedFreeText());
+}
+
+function applyLanguageToStaticElements() {
+  const langCode = languageState.current === 'zh' ? 'zh-CN' : 'en';
+  document.documentElement.lang = langCode;
+  document.title = t('appTitle');
+
+  document.querySelectorAll('[data-i18n]').forEach((node) => {
+    const key = node.getAttribute('data-i18n');
+    if (!key) return;
+    const text = t(key);
+    if (text) {
+      node.textContent = text;
+    }
+  });
+
+  if (elements.placeholder) {
+    elements.placeholder.textContent = t('placeholderText');
+  }
+
+  updateZoomIndicator(state.viewport.zoom);
+  refreshPositionIndicator();
+}
+
+if (elements.languageToggle) {
+  elements.languageToggle.addEventListener('click', () => {
+    languageState.current = languageState.current === 'zh' ? 'en' : 'zh';
+    applyLanguageToStaticElements();
+  });
+}
 function normalizeBubbleFillColor(color) {
   return color === BUBBLE_FILL_DARK ? BUBBLE_FILL_DARK : BUBBLE_FILL_DEFAULT;
 }
@@ -336,21 +473,57 @@ function pro5_mountRightPanelControls() {
   // 放进右侧控制栏，采用普通流式布局，不会遮挡按钮
   const host = document.getElementById('right-panel') || document.body;
   panel.style.cssText = 'margin:12px 0 16px 0;padding:10px 12px;background:#ffffff14;border:1px solid rgba(255,255,255,0.08);border-radius:10px;font:12px/1.4 sans-serif;color:#e9edf4;';
-  panel.innerHTML = `
-    <div style="font-weight:600;margin-bottom:6px">文本排版</div>
-    <label style="display:block;margin:6px 0 2px">文字距边框（四挡）</label>
-    <input id="pro5-pad" type="range" min="1" max="5" step="2" value="${state.pro5_textPaddingPreset}" style="width:100%">
-    <label style="display:block;margin:8px 0 2px">
-      <input id="pro5-wrap" type="checkbox" ${state.pro5_autoWrapEnabled ? 'checked':''}> 自动换行
-    </label>
-    <label style="display:block;margin:6px 0 2px">每行字数（4~10）</label>
-    <input id="pro5-cpl" type="range" min="4" max="10" step="1" value="${state.pro5_charsPerLine}" style="width:100%">
-  `;
-  host.appendChild(panel);
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:600;margin-bottom:6px';
+  title.dataset.i18n = 'typographyTitle';
+  title.textContent = t('typographyTitle');
+  panel.appendChild(title);
 
-  const pad = panel.querySelector('#pro5-pad');
-  const wrap = panel.querySelector('#pro5-wrap');
-  const cpl = panel.querySelector('#pro5-cpl');
+  const padLabel = document.createElement('label');
+  padLabel.style.cssText = 'display:block;margin:6px 0 2px';
+  padLabel.dataset.i18n = 'paddingLabel';
+  padLabel.textContent = t('paddingLabel');
+  panel.appendChild(padLabel);
+
+  const pad = document.createElement('input');
+  pad.id = 'pro5-pad';
+  pad.type = 'range';
+  pad.min = '1';
+  pad.max = '5';
+  pad.step = '2';
+  pad.value = state.pro5_textPaddingPreset;
+  pad.style.width = '100%';
+  panel.appendChild(pad);
+
+  const wrapLabel = document.createElement('label');
+  wrapLabel.style.cssText = 'display:flex;align-items:center;gap:6px;margin:8px 0 2px';
+  const wrap = document.createElement('input');
+  wrap.id = 'pro5-wrap';
+  wrap.type = 'checkbox';
+  wrap.checked = !!state.pro5_autoWrapEnabled;
+  const wrapText = document.createElement('span');
+  wrapText.dataset.i18n = 'autoWrap';
+  wrapText.textContent = t('autoWrap');
+  wrapLabel.append(wrap, wrapText);
+  panel.appendChild(wrapLabel);
+
+  const cplLabel = document.createElement('label');
+  cplLabel.style.cssText = 'display:block;margin:6px 0 2px';
+  cplLabel.dataset.i18n = 'charsPerLine';
+  cplLabel.textContent = t('charsPerLine');
+  panel.appendChild(cplLabel);
+
+  const cpl = document.createElement('input');
+  cpl.id = 'pro5-cpl';
+  cpl.type = 'range';
+  cpl.min = '4';
+  cpl.max = '10';
+  cpl.step = '1';
+  cpl.value = state.pro5_charsPerLine;
+  cpl.style.width = '100%';
+  panel.appendChild(cpl);
+
+  host.appendChild(panel);
 
   pad.addEventListener('input', () => {
     state.pro5_textPaddingPreset = Number(pad.value);
@@ -383,6 +556,7 @@ function init() {
   render();
   pro5_mountRightPanelControls();
   updatePanelControlsFromState();
+  applyLanguageToStaticElements();
 }
 
 function setupSelectionOverlay() {
@@ -624,7 +798,7 @@ function updateSceneTransform() {
    // 你要保留“叠加层跟随场景”的思路，就同步给 overlay：
   if (elements.selectionOverlay) elements.selectionOverlay.style.transform = t;
   if (elements.panelOverlay) elements.panelOverlay.style.transform = t;
-  elements.zoomIndicator.textContent = `缩放：${Math.round(zoom * 100)}%`;
+  updateZoomIndicator(zoom);
    // 等浏览器把 transform 应用完，再刷新选框，避免取到旧布局
   cancelAnimationFrame(state._pro5_selRaf || 0);
   state._pro5_selRaf = requestAnimationFrame(updateSelectionOverlay);
@@ -1355,7 +1529,11 @@ function updateFreeTextIndicator(freeText) {
     return;
   }
   const rotation = Math.round(normalizeDegrees(freeText.rotation || 0));
-  elements.positionIndicator.textContent = `位置：(${freeText.x.toFixed(0)}, ${freeText.y.toFixed(0)}) 旋转：${rotation}°`;
+  elements.positionIndicator.textContent = t('positionIndicatorFreeText', {
+    x: formatIndicatorNumber(freeText.x),
+    y: formatIndicatorNumber(freeText.y),
+    rotation,
+  });
 }
 
 function setSelectedFreeText(id) {
@@ -1986,7 +2164,7 @@ function updateControlsFromSelection() {
     elements.fontSize.value = bubble.fontSize;
     elements.toggleBold.dataset.active = bubble.bold ? 'true' : 'false';
     elements.textContent.value = bubble.text;
-    elements.positionIndicator.textContent = `位置：(${bubble.x.toFixed(0)}, ${bubble.y.toFixed(0)}) 尺寸：${bubble.width.toFixed(0)}×${bubble.height.toFixed(0)}`;
+    setBubblePositionIndicator(bubble);
   }
 
   if (freeText) {
@@ -2010,7 +2188,7 @@ function updateControlsFromSelection() {
     }
     if (!bubble) {
       elements.fontSize.value = state.fontSize;
-      elements.positionIndicator.textContent = '';
+      setBubblePositionIndicator(null);
     }
   }
 }
@@ -3729,7 +3907,7 @@ function updateSelectionOverlay() {
   const bubble = getSelectedBubble();
   if (!bubble) {
     elements.selectionOverlay.classList.add('hidden');
-    elements.positionIndicator.textContent = '';
+    setBubblePositionIndicator(null);
     if (overlay.tailHandle) {
       overlay.tailHandle.style.display = 'none';
     }
@@ -3787,8 +3965,7 @@ function updateSelectionOverlay() {
   }
 
   renderPro5degHandles(bubble);
-  elements.positionIndicator.textContent =
-    `位置：(${bubble.x.toFixed(0)}, ${bubble.y.toFixed(0)}) 尺寸：${bubble.width.toFixed(0)}×${bubble.height.toFixed(0)}`;
+  setBubblePositionIndicator(bubble);
 }
 
 function ensurePro5Handle(type, color) {
@@ -4824,206 +5001,437 @@ async function pro5_handleExport() {
 // Minimal ag-psd exporter attempt: dynamic import and best-effort PSD with text layers.
 // On any runtime error this function throws so caller can fallback to raster PSD.
 async function exportPsdWithAgPsd() {
-  const moduleUrl = 'https://unpkg.com/ag-psd@latest/dist/ag-psd.esm.js';
+  const moduleUrl = 'https://unpkg.com/ag-psd@18.1.0/dist/ag-psd.esm.js';
   const ag = await import(moduleUrl);
   const writePsd = ag.writePsd || ag.default?.writePsd;
   if (!writePsd) throw new Error('ag-psd writePsd not found');
-  const { createCanvas, Canvas } = await import('https://unpkg.com/canvas-for-psd');
 
-  const width = state.canvas.width;
-  const height = state.canvas.height;
+  const docSize = pro5_getDocumentSize();
+  const { width, height } = docSize;
+  const bubbles = Array.isArray(state.bubbles) ? [...state.bubbles] : [];
+  const freeTexts = Array.isArray(state.freeTexts) ? [...state.freeTexts] : [];
+  const pf = state.pageFrame;
+  const panelMap = pf?.active && Array.isArray(pf.panels)
+    ? new Map(pf.panels.map((panel) => [panel.id, panel]))
+    : new Map();
 
-  // Build PSD structure with proper layer order and complete metadata
   const children = [];
 
-  // 1) Background layer (if exists)
-  if (state.image && state.image.src) {
-    const baseCanvas = document.createElement('canvas');
-    baseCanvas.width = width;
-    baseCanvas.height = height;
-    const baseCtx = baseCanvas.getContext('2d');
-    baseCtx.drawImage(elements.baseImage, 0, 0, width, height);
-    const baseData = baseCtx.getImageData(0, 0, width, height);
-    children.push({
-      name: '底图',
-      top: 0, left: 0, right: width, bottom: height,
-      opacity: 255,
-      channels: [{}, {}, {}, {}],
-      imageData: { width, height, data: new Uint8Array(baseData.data.buffer.slice(0)) }
-    });
-  }
-
-  // 2) Panel frames and their images
-  const pf = state.pageFrame;
-  if (pf?.active && Array.isArray(pf.panels)) {
-    for (const panel of pf.panels) {
-      // Panel image layer (if exists)
-      if (panel.image && panel.image.src) {
-        const pCanvas = document.createElement('canvas');
-        pCanvas.width = width;
-        pCanvas.height = height;
-        const pCtx = pCanvas.getContext('2d');
-        
-        // Clip to panel bounds
-        pCtx.save();
-        pCtx.beginPath();
-        pCtx.rect(panel.x, panel.y, panel.width, panel.height);
-        pCtx.clip();
-
-        // Draw panel image with transforms
-        const img = new Image();
-        img.src = panel.image.src;
-        const scale = panel.image.scale ?? 1;
-        const rotDeg = panel.image.rotation ?? 0;
-        const offX = panel.image.offsetX ?? 0;
-        const offY = panel.image.offsetY ?? 0;
-
-        const cx = panel.x + panel.width / 2 + offX;
-        const cy = panel.y + panel.height / 2 + offY;
-
-        pCtx.translate(cx, cy);
-        pCtx.rotate((rotDeg * Math.PI) / 180);
-        pCtx.scale(scale, scale);
-        pCtx.drawImage(img, -img.width/2, -img.height/2, img.width, img.height);
-        pCtx.restore();
-
-        const pData = pCtx.getImageData(0, 0, width, height);
-        children.push({
-          name: `格内图-${panel.id}`,
-          top: 0, left: 0, right: width, bottom: height,
-          opacity: 255,
-          channels: [{}, {}, {}, {}],
-          imageData: { width, height, data: new Uint8Array(pData.data.buffer.slice(0)) }
-        });
-      }
-
-      // Panel frame layer
-      const frameCanvas = document.createElement('canvas');
-      frameCanvas.width = width;
-      frameCanvas.height = height;
-      const frameCtx = frameCanvas.getContext('2d');
-      frameCtx.strokeStyle = '#10131c';
-      frameCtx.lineWidth = pf.lineWidth || 4;
-      frameCtx.strokeRect(panel.x, panel.y, panel.width, panel.height);
-      const frameData = frameCtx.getImageData(0, 0, width, height);
-      children.push({
-        name: `格框-${panel.id}`,
-        top: Math.round(panel.y),
-        left: Math.round(panel.x),
-        right: Math.round(panel.x + panel.width),
-        bottom: Math.round(panel.y + panel.height),
-        opacity: 255,
-        visible: true,
-        clipping: false,
-        channels: [{}, {}, {}, {}],
-        imageData: { width, height, data: new Uint8Array(frameData.data.buffer.slice(0)) }
-      });
+  // === 1. 矢量文本层（自上而下） ===
+  bubbles.forEach((bubble) => {
+    const textLayer = pro5_buildBubbleTextLayerForPsd(bubble, docSize);
+    if (textLayer) {
+      children.push(textLayer);
     }
-  }
-
-  // 3) Speech bubbles and text layers
-  if (Array.isArray(state.bubbles)) {
-    for (const bubble of state.bubbles) {
-      // Bubble shape layer
-      const bubbleCanvas = document.createElement('canvas');
-      bubbleCanvas.width = width;
-      bubbleCanvas.height = height;
-      const bubbleCtx = bubbleCanvas.getContext('2d');
-      drawBubblesToContext(bubbleCtx, { includeText: false, includeBodies: true });
-      const bubbleData = bubbleCtx.getImageData(0, 0, width, height);
-      children.push({
-        name: `气泡-${bubble.id}`,
-        top: 0, left: 0, right: width, bottom: height,
-        opacity: 255,
-        channels: [{}, {}, {}, {}],
-        imageData: { width, height, data: new Uint8Array(bubbleData.data.buffer.slice(0)) }
-      });
-
-      // Text layer with enhanced metadata for Photoshop compatibility
-      const text = pro5_getBubbleText(bubble);
-      if (text) {
-        const rect = getTextRect(bubble);
-        if (rect) {
-          const lines = pro5_domWrapLines(text, bubble.fontFamily, bubble.fontSize, bubble.bold, Math.max(1, Math.round(rect.width)), state.pro5_autoWrapEnabled);
-          const display = lines.join('\n');
-          const colorHex = getBubbleTextColor(bubble);
-          const toRgb = (h) => { if(!h) return {r:0,g:0,b:0}; h=String(h).replace('#',''); if(h.length===3) return {r:parseInt(h[0]+h[0],16),g:parseInt(h[1]+h[1],16),b:parseInt(h[2]+h[2],16)}; return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)} };
-          const { r, g, b } = toRgb(colorHex);
-
-          // Enhanced text layer structure for better Photoshop compatibility
-          const textLayer = {
-            name: `文字-${bubble.id}`,
-            top: Math.round(rect.y),
-            left: Math.round(rect.x),
-            right: Math.round(rect.x + rect.width),
-            bottom: Math.round(rect.y + rect.height),
-            opacity: 255,
-            visible: true,
-            clipping: false,
-            type: 'textLayer',
-            text: {
-              text: display,
-              transform: { xx: 1, xy: 0, yx: 0, yy: 1, tx: Math.round(rect.x), ty: Math.round(rect.y) },
-              style: {
-                font: {
-                  name: bubble.fontFamily || state.fontFamily,
-                  sizes: [bubble.fontSize || state.fontSize],
-                  colors: [[r, g, b]],
-                  alignment: ['center']
-                },
-                fontSize: bubble.fontSize || state.fontSize,
-                fontFamily: bubble.fontFamily || state.fontFamily,
-                fontWeight: bubble.bold ? 'bold' : 'normal',
-                fillColor: { r, g, b },
-                justification: 'center'
-              },
-              engine: {
-                version: 50,
-                descriptionVersion: 2,
-                leading: Math.round((bubble.lineHeight || Math.round((bubble.fontSize||state.fontSize) * 1.2))),
-                tracking: 0,
-                textGridding: 'none',
-                paragraphStyle: { justification: 2 },
-                writingDirection: 0,
-                fontPostScriptName: bubble.fontFamily || state.fontFamily,
-                renderingIntent: 2
-              },
-              warp: {
-                style: 'none',
-                value: 0,
-                perspective: 0,
-                perspectiveOther: 0,
-                rotate: 0
-              }
-            }
-          };
-          children.push(textLayer);
-        }
-      }
+  });
+  freeTexts.forEach((freeText, index) => {
+    const textLayer = pro5_buildFreeTextLayerForPsd(freeText, index, docSize);
+    if (textLayer) {
+      children.push(textLayer);
     }
+  });
+
+  // === 2. 漫画泡泡层（未放入格内的对白气泡） ===
+  const floatingBubbles = bubbles.filter((bubble) => bubble.panelId == null);
+  const floatingBubbleLayer = pro5_buildBubbleBodiesLayer(
+    '漫画泡泡',
+    floatingBubbles,
+    { clipToPanel: false, panelMap, size: docSize }
+  );
+  if (floatingBubbleLayer) {
+    children.push(floatingBubbleLayer);
   }
+
+  // === 3. 漫画格框层 ===
+  const frameLayer = pro5_buildPanelFrameLayer(pf, docSize);
+  if (frameLayer) {
+    children.push(frameLayer);
+  }
+
+  // === 4. 被放入漫画格内的漫画泡泡层（若存在） ===
+  const panelBubbles = bubbles.filter((bubble) => bubble.panelId != null);
+  const panelBubbleLayer = pro5_buildBubbleBodiesLayer(
+    '格内漫画泡泡',
+    panelBubbles,
+    { clipToPanel: true, panelMap, size: docSize }
+  );
+  if (panelBubbleLayer) {
+    children.push(panelBubbleLayer);
+  }
+
+  // === 5. 漫画格内图片层（包含底图 + 各格内图片） ===
+  const panelImageLayer = await pro5_buildPanelImageLayer(pf, docSize);
+  if (panelImageLayer) {
+    children.push(panelImageLayer);
+  }
+
+  // === 6. 白色底部背景 ===
+  children.push(pro5_buildSolidBackgroundLayer(docSize));
 
   const psdObj = {
     width,
     height,
     children,
     channelsInColor: true,
-    colorMode: 3, // RGB
+    colorMode: 3,
     depth: 8,
     bitsPerChannel: 8,
     transparencyProtected: false,
     hidden: false,
   };
 
-  try {
-    const out = writePsd(psdObj);
-    const buffer = out instanceof ArrayBuffer ? out : (out && out.buffer ? out.buffer : out);
-    if (!buffer) throw new Error('ag-psd returned no buffer');
-    downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), 'comic-bubbles.psd');
-  } catch (err) {
-    console.error('PSD export error:', err);
-    throw err;
+  const out = writePsd(psdObj);
+  const buffer = out instanceof ArrayBuffer ? out : (out && out.buffer ? out.buffer : out);
+  if (!buffer) throw new Error('ag-psd returned no buffer');
+  downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), 'comic-bubbles.psd');
+}
+
+function pro5_getDocumentSize() {
+  const widthCandidates = [
+    state?.canvas?.width,
+    state?.image?.width,
+    elements.baseImage?.naturalWidth,
+    elements.baseImage?.width,
+    elements.scene?.viewBox?.baseVal?.width,
+    elements.scene?.clientWidth,
+    1200,
+  ];
+  const heightCandidates = [
+    state?.canvas?.height,
+    state?.image?.height,
+    elements.baseImage?.naturalHeight,
+    elements.baseImage?.height,
+    elements.scene?.viewBox?.baseVal?.height,
+    elements.scene?.clientHeight,
+    1600,
+  ];
+  const width = Math.max(1, Math.round(widthCandidates.find((value) => typeof value === 'number' && value > 0) || 1200));
+  const height = Math.max(1, Math.round(heightCandidates.find((value) => typeof value === 'number' && value > 0) || 1600));
+  return { width, height };
+}
+
+function pro5_colorHexToRgb(color) {
+  if (!color) {
+    return { r: 0, g: 0, b: 0 };
   }
+  const hex = String(color).trim().replace('#', '');
+  if (hex.length === 3) {
+    const r = parseInt(hex[0] + hex[0], 16);
+    const g = parseInt(hex[1] + hex[1], 16);
+    const b = parseInt(hex[2] + hex[2], 16);
+    return { r, g, b };
+  }
+  if (hex.length === 6) {
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return { r, g, b };
+  }
+  return { r: 0, g: 0, b: 0 };
+}
+
+function pro5_buildBubbleTextLayerForPsd(bubble, size) {
+  const rawText = pro5_getBubbleText(bubble);
+  if (!rawText) return null;
+  const displayText = getBubbleDisplayText(bubble) || '';
+  if (!displayText) return null;
+
+  const rect = getTextRect(bubble);
+  if (!rect || !isFinite(rect.x) || !isFinite(rect.y)) return null;
+
+  const font = pro5_computeFontForBubble(bubble);
+  const { fontFamily, fontSize, lineHeight, fontWeight, textAlign, color } = font;
+  const { r, g, b } = pro5_colorHexToRgb(color);
+  const align = textAlign === 'left' ? 'left' : textAlign === 'right' ? 'right' : 'center';
+  const psdText = displayText.replace(/\r?\n/g, '\r');
+  if (!psdText.length) return null;
+
+  const left = Math.max(0, Math.round(rect.x));
+  const top = Math.max(0, Math.round(rect.y));
+  const right = Math.min(size.width, Math.round(rect.x + rect.width));
+  const bottom = Math.min(size.height, Math.round(rect.y + rect.height));
+  const fauxBold = fontWeight === '700' || fontWeight === 'bold' || fontWeight === 700;
+
+  return {
+    name: `文字-${bubble.id ?? ''}`,
+    top,
+    left,
+    right,
+    bottom,
+    opacity: 255,
+    visible: true,
+    clipping: false,
+    blendMode: 'normal',
+    type: 'textLayer',
+    text: {
+      text: psdText,
+      transform: { xx: 1, xy: 0, yx: 0, yy: 1, tx: left, ty: top },
+      bounds: { left, top, right, bottom },
+      orientation: 'horizontal',
+      antiAlias: 'smooth',
+      style: {
+        font: {
+          name: fontFamily,
+          sizes: [fontSize],
+          colors: [[r / 255, g / 255, b / 255, 1]],
+          alignment: [align],
+          fauxBold,
+          fauxItalic: false,
+        },
+        leading: lineHeight,
+        tracking: 0,
+        autoKerning: true,
+        fillColor: { r: r / 255, g: g / 255, b: b / 255, a: 1 },
+        strokeColor: { r: 0, g: 0, b: 0, a: 0 },
+        horizontalScale: 1,
+        verticalScale: 1,
+        baselineShift: 0,
+        justification: align,
+      },
+      textStyleRanges: [
+        {
+          from: 0,
+          to: psdText.length,
+          style: {
+            fontName: fontFamily,
+            fontStyleName: fauxBold ? 'Bold' : 'Regular',
+            fontSize,
+            fillColor: { r: r / 255, g: g / 255, b: b / 255, a: 1 },
+            horizontalScale: 1,
+            verticalScale: 1,
+            baselineShift: 0,
+            tracking: 0,
+            autoKerning: true,
+            leading: lineHeight,
+            underline: false,
+            strikethrough: false,
+            fauxBold,
+            fauxItalic: false,
+          },
+        },
+      ],
+      paragraphStyleRanges: [
+        {
+          from: 0,
+          to: psdText.length,
+          style: {
+            justification: align,
+          },
+        },
+      ],
+      warp: {
+        style: 'none',
+        value: 0,
+        perspective: 0,
+        perspectiveOther: 0,
+        rotate: 0,
+      },
+    },
+  };
+}
+
+function pro5_buildFreeTextLayerForPsd() {
+  return null;
+}
+
+function pro5_buildBubbleBodiesLayer(name, bubbleList, options = {}) {
+  const list = Array.isArray(bubbleList) ? bubbleList : [];
+  if (!list.length) return null;
+  const { clipToPanel = false, panelMap = new Map(), size = pro5_getDocumentSize() } = options;
+  const { width, height } = size;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  list.forEach((bubble) => {
+    ctx.save();
+    if (clipToPanel && bubble.panelId != null && panelMap.has(bubble.panelId)) {
+      const panel = panelMap.get(bubble.panelId);
+      ctx.beginPath();
+      ctx.rect(panel.x, panel.y, panel.width, panel.height);
+      ctx.clip();
+    }
+
+    ctx.lineWidth = bubble.strokeWidth || state.defaultStrokeWidth || 2;
+    ctx.strokeStyle = '#11141b';
+    ctx.fillStyle = getBubbleFillColor(bubble);
+
+    if (bubble.type === 'speech-pro-5deg') {
+      const path = pro5_mergedEllipseTailPath(bubble);
+      if (path) {
+        drawPath(ctx, path);
+      }
+    } else if (bubble.type === 'shout-burst') {
+      drawPath(ctx, pro5_createShoutPath(bubble));
+    } else if (bubble.type === 'rectangle' || bubble.type === 'speech-left' || bubble.type === 'speech-right') {
+      drawPath(ctx, createRectanglePath(bubble));
+    } else if (bubble.type && bubble.type.startsWith('thought')) {
+      ctx.beginPath();
+      ctx.ellipse(
+        bubble.x + bubble.width / 2,
+        bubble.y + bubble.height / 2,
+        bubble.width / 2,
+        bubble.height / 2,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      drawPath(
+        ctx,
+        createRoundedRectPath(
+          bubble.x,
+          bubble.y,
+          bubble.width,
+          bubble.height,
+          Math.min(bubble.width, bubble.height) * 0.45,
+        ),
+      );
+    }
+
+    if (bubble.tail) {
+      if (bubble.type && bubble.type.startsWith('thought')) {
+        drawThoughtTail(ctx, bubble);
+      } else if (bubble.type !== 'speech-pro-5deg') {
+        drawPath(ctx, buildSpeechTailPath(bubble));
+      }
+    }
+
+    ctx.restore();
+  });
+
+  return pro5_canvasToLayer(name, canvas, size);
+}
+
+function pro5_buildPanelFrameLayer(pf, size = pro5_getDocumentSize()) {
+  if (!pf?.active || !Array.isArray(pf.panels) || pf.panels.length === 0) {
+    return null;
+  }
+  const { width, height } = size;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const frameColor = pf.frameColor === 'black' ? '#000000' : pf.frameColor === 'white' ? '#ffffff' : (pf.frameColor || '#11141b');
+  ctx.strokeStyle = frameColor;
+  ctx.lineWidth = pf.lineWidth || 4;
+  ctx.lineJoin = 'miter';
+  ctx.lineCap = 'butt';
+
+  pf.panels.forEach((panel) => {
+    ctx.strokeRect(panel.x, panel.y, panel.width, panel.height);
+  });
+
+  return pro5_canvasToLayer('漫画格框', canvas, size);
+}
+
+async function pro5_buildPanelImageLayer(pf, size = pro5_getDocumentSize()) {
+  const hasBaseImage = !!(state?.image?.src);
+  const hasPanelImages = !!(pf?.active && Array.isArray(pf.panels) && pf.panels.some((panel) => panel.image && panel.image.src));
+  if (!hasBaseImage && !hasPanelImages) {
+    return null;
+  }
+
+  const { width, height } = size;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  if (hasBaseImage) {
+    try {
+      const baseImage = await pro5_loadImageBitmap(state.image.src);
+      const imgWidth = baseImage.naturalWidth || baseImage.width || width;
+      const imgHeight = baseImage.naturalHeight || baseImage.height || height;
+      ctx.drawImage(baseImage, 0, 0, imgWidth, imgHeight, 0, 0, width, height);
+    } catch (error) {
+      console.warn('Base image decode failed for PSD export:', error);
+    }
+  }
+
+  if (hasPanelImages) {
+    const panelMap = new Map(pf.panels.map((panel) => [panel.id, panel]));
+    for (const panel of panelMap.values()) {
+      if (!panel.image || !panel.image.src) continue;
+      try {
+        const panelImage = await pro5_loadImageBitmap(panel.image.src);
+        const imgWidth = panelImage.naturalWidth || panelImage.width;
+        const imgHeight = panelImage.naturalHeight || panelImage.height;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(panel.x, panel.y, panel.width, panel.height);
+        ctx.clip();
+
+        const scale = panel.image.scale ?? 1;
+        const rotation = panel.image.rotation ?? 0;
+        const offsetX = panel.image.offsetX ?? 0;
+        const offsetY = panel.image.offsetY ?? 0;
+        const centerX = panel.x + panel.width / 2 + offsetX;
+        const centerY = panel.y + panel.height / 2 + offsetY;
+
+        ctx.translate(centerX, centerY);
+        ctx.rotate((rotation * Math.PI) / 180);
+        ctx.scale(scale, scale);
+        ctx.drawImage(panelImage, -imgWidth / 2, -imgHeight / 2, imgWidth, imgHeight);
+        ctx.restore();
+      } catch (error) {
+        console.warn('Panel image decode failed for PSD export:', error);
+      }
+    }
+  }
+
+  return pro5_canvasToLayer('漫画格内图片', canvas, size);
+}
+
+function pro5_buildSolidBackgroundLayer(size = pro5_getDocumentSize()) {
+  const { width, height } = size;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+  return pro5_canvasToLayer('白色底部背景', canvas, size);
+}
+
+function pro5_canvasToLayer(name, canvas, size = pro5_getDocumentSize()) {
+  const { width, height } = size;
+  const ctx = canvas.getContext('2d');
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return {
+    name,
+    top: 0,
+    left: 0,
+    right: width,
+    bottom: height,
+    opacity: 255,
+    visible: true,
+    clipping: false,
+    blendMode: 'normal',
+    channels: [{}, {}, {}, {}],
+    imageData: {
+      width: canvas.width,
+      height: canvas.height,
+      data: new Uint8Array(data.data.buffer.slice(0)),
+    },
+  };
+}
+
+function pro5_loadImageBitmap(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
 }
 
 
