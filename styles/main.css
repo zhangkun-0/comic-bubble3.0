@@ -40,6 +40,16 @@ body {
   overflow-y: auto;
 }
 
+.language-toggle-container {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 18px;
+}
+
+#language-toggle {
+  min-width: 96px;
+}
+
 #right-panel {
   border-right: 0;
   border-left: 1px solid rgba(255, 255, 255, 0.05);
