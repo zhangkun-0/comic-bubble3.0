@@ -28,6 +28,7 @@ const elements = {
   outerTextStyle: document.getElementById('outer-text-style'),
   exportFormat: document.getElementById('export-format'),
   exportButton: document.getElementById('export'),
+  languageToggle: document.getElementById('language-toggle'),
   measureBox: document.getElementById('measure-box'),
   panelLayer: document.getElementById('panel-layer'),
   panelSvg: document.getElementById('panel-svg'),
@@ -117,6 +118,142 @@ const panelOverlayState = {
   handles: new Map(),
 };
 
+const languageState = {
+  current: 'zh',
+};
+
+const I18N_STRINGS = {
+  appTitle: { zh: '漫画气泡', en: 'Comic Bubbles' },
+  appHeading: { zh: '漫画气泡', en: 'Comic Bubbles' },
+  importImage: { zh: '导入图片', en: 'Import Image' },
+  bubbleTypeLabel: { zh: '对话框选择', en: 'Bubble Type' },
+  bubbleOptionSpeech: { zh: '对白气泡', en: 'Speech Bubble' },
+  bubbleOptionThought: { zh: '思想气泡', en: 'Thought Bubble' },
+  bubbleOptionCombo: { zh: '组合气泡', en: 'Combo Bubble' },
+  bubbleOptionRectangle: { zh: '矩形气泡', en: 'Rectangle Bubble' },
+  bubbleOptionShout: { zh: '喊叫气泡', en: 'Shout Bubble' },
+  strokeWidthLabel: { zh: '对话框粗细', en: 'Bubble Stroke Width' },
+  insertBubble: { zh: '插入对话框', en: 'Insert Bubble' },
+  removeBubble: { zh: '删除对话框', en: 'Delete Bubble' },
+  placeBubble: { zh: '放入漫画格', en: 'Place into Panel' },
+  panelSectionTitle: { zh: '漫画分格', en: 'Comic Panels' },
+  panelImageRotationLabel: { zh: '格框内图片旋转', en: 'Panel Image Rotation' },
+  panelHint: {
+    zh: '在漫画页框内ctrl+鼠标左键拖拽可切分格框，鼠标左键拖动画格，右键拖动格内图。',
+    en: 'Inside the comic page, press Ctrl and drag with the left mouse button to split panels. Drag with the left button to move panels and with the right button to move images.',
+  },
+  panelMarginHorizontalLabel: { zh: '漫画页框左右间距', en: 'Page Frame Horizontal Margin' },
+  panelMarginVerticalLabel: { zh: '漫画页框上下间距', en: 'Page Frame Vertical Margin' },
+  panelLineWidthLabel: { zh: '漫画格框线条', en: 'Panel Border Width' },
+  panelGapHorizontalLabel: { zh: '横向间隙', en: 'Horizontal Gap' },
+  panelGapVerticalLabel: { zh: '纵向间隙', en: 'Vertical Gap' },
+  panelFrameColorLabel: { zh: '格框外部颜色', en: 'Frame Color' },
+  panelFrameWhite: { zh: '白色', en: 'White' },
+  panelFrameBlack: { zh: '黑色', en: 'Black' },
+  placeholderText: { zh: '请先导入漫画图片', en: 'Please import a comic image first' },
+  fontFamilyLabel: { zh: '文字选择', en: 'Font Family' },
+  fontOptionYaHei: { zh: '微软雅黑', en: 'Microsoft YaHei' },
+  fontOptionHei: { zh: '黑体', en: 'SimHei' },
+  fontOptionSimSun: { zh: '新宋体', en: 'NSimSun' },
+  fontSizeLabel: { zh: '字号', en: 'Font Size' },
+  toggleBold: { zh: '字体加粗', en: 'Bold Text' },
+  textContentLabel: { zh: '框内输入', en: 'Bubble Text' },
+  outerTextContentLabel: { zh: '框外输入', en: 'Free Text' },
+  outerTextStyle: { zh: '白字黑边', en: 'White Text with Black Outline' },
+  exportFormatLabel: { zh: '导出选项', en: 'Export Options' },
+  exportButton: { zh: '导出图片', en: 'Export Image' },
+  languageToggle: { zh: 'English', en: '中文' },
+  typographyTitle: { zh: '文本排版', en: 'Typography' },
+  paddingLabel: { zh: '文字距边框（四挡）', en: 'Text Padding (4 levels)' },
+  autoWrap: { zh: '自动换行', en: 'Auto Wrap' },
+  charsPerLine: { zh: '每行字数（4~10）', en: 'Characters per Line (4-10)' },
+  zoomIndicator: { zh: '缩放：{value}%', en: 'Zoom: {value}%' },
+  positionIndicatorBubble: {
+    zh: '位置：({x}, {y}) 尺寸：{width}×{height}',
+    en: 'Position: ({x}, {y}) Size: {width}×{height}',
+  },
+  positionIndicatorFreeText: {
+    zh: '位置：({x}, {y}) 旋转：{rotation}°',
+    en: 'Position: ({x}, {y}) Rotation: {rotation}°',
+  },
+};
+
+function t(key, replacements = {}) {
+  const entry = I18N_STRINGS[key];
+  if (!entry) return '';
+  const template = entry[languageState.current] ?? entry.zh ?? '';
+  return template.replace(/\{(\w+)\}/g, (match, token) => {
+    if (Object.prototype.hasOwnProperty.call(replacements, token)) {
+      const value = replacements[token];
+      return value != null ? String(value) : '';
+    }
+    return '';
+  });
+}
+
+function formatIndicatorNumber(value) {
+  return Number(value ?? 0).toFixed(0);
+}
+
+function updateZoomIndicator(zoom) {
+  if (!elements.zoomIndicator) return;
+  const percent = Math.round((zoom ?? 0) * 100);
+  elements.zoomIndicator.textContent = t('zoomIndicator', { value: percent });
+}
+
+function setBubblePositionIndicator(bubble) {
+  if (!elements.positionIndicator) return;
+  if (!bubble) {
+    if (!getSelectedFreeText()) {
+      elements.positionIndicator.textContent = '';
+    }
+    return;
+  }
+  elements.positionIndicator.textContent = t('positionIndicatorBubble', {
+    x: formatIndicatorNumber(bubble.x),
+    y: formatIndicatorNumber(bubble.y),
+    width: formatIndicatorNumber(bubble.width),
+    height: formatIndicatorNumber(bubble.height),
+  });
+}
+
+function refreshPositionIndicator() {
+  const bubble = getSelectedBubble();
+  if (bubble) {
+    setBubblePositionIndicator(bubble);
+    return;
+  }
+  updateFreeTextIndicator(getSelectedFreeText());
+}
+
+function applyLanguageToStaticElements() {
+  const langCode = languageState.current === 'zh' ? 'zh-CN' : 'en';
+  document.documentElement.lang = langCode;
+  document.title = t('appTitle');
+
+  document.querySelectorAll('[data-i18n]').forEach((node) => {
+    const key = node.getAttribute('data-i18n');
+    if (!key) return;
+    const text = t(key);
+    if (text) {
+      node.textContent = text;
+    }
+  });
+
+  if (elements.placeholder) {
+    elements.placeholder.textContent = t('placeholderText');
+  }
+
+  updateZoomIndicator(state.viewport.zoom);
+  refreshPositionIndicator();
+}
+
+if (elements.languageToggle) {
+  elements.languageToggle.addEventListener('click', () => {
+    languageState.current = languageState.current === 'zh' ? 'en' : 'zh';
+    applyLanguageToStaticElements();
+  });
+}
 function normalizeBubbleFillColor(color) {
   return color === BUBBLE_FILL_DARK ? BUBBLE_FILL_DARK : BUBBLE_FILL_DEFAULT;
 }
@@ -336,21 +473,57 @@ function pro5_mountRightPanelControls() {
   // 放进右侧控制栏，采用普通流式布局，不会遮挡按钮
   const host = document.getElementById('right-panel') || document.body;
   panel.style.cssText = 'margin:12px 0 16px 0;padding:10px 12px;background:#ffffff14;border:1px solid rgba(255,255,255,0.08);border-radius:10px;font:12px/1.4 sans-serif;color:#e9edf4;';
-  panel.innerHTML = `
-    <div style="font-weight:600;margin-bottom:6px">文本排版</div>
-    <label style="display:block;margin:6px 0 2px">文字距边框（四挡）</label>
-    <input id="pro5-pad" type="range" min="1" max="5" step="2" value="${state.pro5_textPaddingPreset}" style="width:100%">
-    <label style="display:block;margin:8px 0 2px">
-      <input id="pro5-wrap" type="checkbox" ${state.pro5_autoWrapEnabled ? 'checked':''}> 自动换行
-    </label>
-    <label style="display:block;margin:6px 0 2px">每行字数（4~10）</label>
-    <input id="pro5-cpl" type="range" min="4" max="10" step="1" value="${state.pro5_charsPerLine}" style="width:100%">
-  `;
-  host.appendChild(panel);
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:600;margin-bottom:6px';
+  title.dataset.i18n = 'typographyTitle';
+  title.textContent = t('typographyTitle');
+  panel.appendChild(title);
 
-  const pad = panel.querySelector('#pro5-pad');
-  const wrap = panel.querySelector('#pro5-wrap');
-  const cpl = panel.querySelector('#pro5-cpl');
+  const padLabel = document.createElement('label');
+  padLabel.style.cssText = 'display:block;margin:6px 0 2px';
+  padLabel.dataset.i18n = 'paddingLabel';
+  padLabel.textContent = t('paddingLabel');
+  panel.appendChild(padLabel);
+
+  const pad = document.createElement('input');
+  pad.id = 'pro5-pad';
+  pad.type = 'range';
+  pad.min = '1';
+  pad.max = '5';
+  pad.step = '2';
+  pad.value = state.pro5_textPaddingPreset;
+  pad.style.width = '100%';
+  panel.appendChild(pad);
+
+  const wrapLabel = document.createElement('label');
+  wrapLabel.style.cssText = 'display:flex;align-items:center;gap:6px;margin:8px 0 2px';
+  const wrap = document.createElement('input');
+  wrap.id = 'pro5-wrap';
+  wrap.type = 'checkbox';
+  wrap.checked = !!state.pro5_autoWrapEnabled;
+  const wrapText = document.createElement('span');
+  wrapText.dataset.i18n = 'autoWrap';
+  wrapText.textContent = t('autoWrap');
+  wrapLabel.append(wrap, wrapText);
+  panel.appendChild(wrapLabel);
+
+  const cplLabel = document.createElement('label');
+  cplLabel.style.cssText = 'display:block;margin:6px 0 2px';
+  cplLabel.dataset.i18n = 'charsPerLine';
+  cplLabel.textContent = t('charsPerLine');
+  panel.appendChild(cplLabel);
+
+  const cpl = document.createElement('input');
+  cpl.id = 'pro5-cpl';
+  cpl.type = 'range';
+  cpl.min = '4';
+  cpl.max = '10';
+  cpl.step = '1';
+  cpl.value = state.pro5_charsPerLine;
+  cpl.style.width = '100%';
+  panel.appendChild(cpl);
+
+  host.appendChild(panel);
 
   pad.addEventListener('input', () => {
     state.pro5_textPaddingPreset = Number(pad.value);
@@ -383,6 +556,7 @@ function init() {
   render();
   pro5_mountRightPanelControls();
   updatePanelControlsFromState();
+  applyLanguageToStaticElements();
 }
 
 function setupSelectionOverlay() {
@@ -624,7 +798,7 @@ function updateSceneTransform() {
    // 你要保留“叠加层跟随场景”的思路，就同步给 overlay：
   if (elements.selectionOverlay) elements.selectionOverlay.style.transform = t;
   if (elements.panelOverlay) elements.panelOverlay.style.transform = t;
-  elements.zoomIndicator.textContent = `缩放：${Math.round(zoom * 100)}%`;
+  updateZoomIndicator(zoom);
    // 等浏览器把 transform 应用完，再刷新选框，避免取到旧布局
   cancelAnimationFrame(state._pro5_selRaf || 0);
   state._pro5_selRaf = requestAnimationFrame(updateSelectionOverlay);
@@ -1355,7 +1529,11 @@ function updateFreeTextIndicator(freeText) {
     return;
   }
   const rotation = Math.round(normalizeDegrees(freeText.rotation || 0));
-  elements.positionIndicator.textContent = `位置：(${freeText.x.toFixed(0)}, ${freeText.y.toFixed(0)}) 旋转：${rotation}°`;
+  elements.positionIndicator.textContent = t('positionIndicatorFreeText', {
+    x: formatIndicatorNumber(freeText.x),
+    y: formatIndicatorNumber(freeText.y),
+    rotation,
+  });
 }
 
 function setSelectedFreeText(id) {
@@ -1986,7 +2164,7 @@ function updateControlsFromSelection() {
     elements.fontSize.value = bubble.fontSize;
     elements.toggleBold.dataset.active = bubble.bold ? 'true' : 'false';
     elements.textContent.value = bubble.text;
-    elements.positionIndicator.textContent = `位置：(${bubble.x.toFixed(0)}, ${bubble.y.toFixed(0)}) 尺寸：${bubble.width.toFixed(0)}×${bubble.height.toFixed(0)}`;
+    setBubblePositionIndicator(bubble);
   }
 
   if (freeText) {
@@ -2010,7 +2188,7 @@ function updateControlsFromSelection() {
     }
     if (!bubble) {
       elements.fontSize.value = state.fontSize;
-      elements.positionIndicator.textContent = '';
+      setBubblePositionIndicator(null);
     }
   }
 }
@@ -3729,7 +3907,7 @@ function updateSelectionOverlay() {
   const bubble = getSelectedBubble();
   if (!bubble) {
     elements.selectionOverlay.classList.add('hidden');
-    elements.positionIndicator.textContent = '';
+    setBubblePositionIndicator(null);
     if (overlay.tailHandle) {
       overlay.tailHandle.style.display = 'none';
     }
@@ -3787,8 +3965,7 @@ function updateSelectionOverlay() {
   }
 
   renderPro5degHandles(bubble);
-  elements.positionIndicator.textContent =
-    `位置：(${bubble.x.toFixed(0)}, ${bubble.y.toFixed(0)}) 尺寸：${bubble.width.toFixed(0)}×${bubble.height.toFixed(0)}`;
+  setBubblePositionIndicator(bubble);
 }
 
 function ensurePro5Handle(type, color) {

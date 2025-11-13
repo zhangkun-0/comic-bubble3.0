@@ -9,9 +9,9 @@
   <body>
     <div id="app">
       <aside class="controls" id="left-panel">
-        <h1>漫画气泡</h1>
+        <h1 data-i18n="appHeading">漫画气泡</h1>
         <div class="section">
-          <button id="import-image" class="primary" type="button">导入图片</button>
+          <button id="import-image" class="primary" type="button" data-i18n="importImage">导入图片</button>
           <input
             id="hidden-image-input"
             class="visually-hidden-input"
@@ -19,24 +19,24 @@
             accept="image/*"
           />
          </div>
-         <div class="section">
-          <label for="bubble-type">对话框选择</label>
+        <div class="section">
+          <label for="bubble-type" data-i18n="bubbleTypeLabel">对话框选择</label>
           <select id="bubble-type">
-           <option value="speech-pro-5deg">对白气泡</option>
-           <option value="thought-circle">思想气泡</option>
-           <option value="combo-circle">组合气泡</option>
-           <option value="rectangle">矩形气泡</option>
-           <option value="shout-burst">喊叫气泡</option>
+           <option value="speech-pro-5deg" data-i18n="bubbleOptionSpeech">对白气泡</option>
+           <option value="thought-circle" data-i18n="bubbleOptionThought">思想气泡</option>
+           <option value="combo-circle" data-i18n="bubbleOptionCombo">组合气泡</option>
+           <option value="rectangle" data-i18n="bubbleOptionRectangle">矩形气泡</option>
+           <option value="shout-burst" data-i18n="bubbleOptionShout">喊叫气泡</option>
           </select>
         </div>
         <div class="section">
-          <label for="stroke-width">对话框粗细</label>
+          <label for="stroke-width" data-i18n="strokeWidthLabel">对话框粗细</label>
           <input id="stroke-width" type="number" min="1" max="20" value="4" />
         </div>
-      
+
         <div class="section button-row">
-          <button id="insert-bubble" class="primary" type="button">插入对话框</button>
-          <button id="remove-bubble" class="danger" type="button" disabled>删除对话框</button>
+          <button id="insert-bubble" class="primary" type="button" data-i18n="insertBubble">插入对话框</button>
+          <button id="remove-bubble" class="danger" type="button" disabled data-i18n="removeBubble">删除对话框</button>
         </div>
         <div class="section">
           <button
@@ -44,13 +44,14 @@
             class="secondary"
             type="button"
             disabled
+            data-i18n="placeBubble"
           >放入漫画格</button>
         </div>
-        
+
         <div class="section" id="panel-controls">
-          <h2>漫画分格</h2>
-          
-            <label for="panel-image-rotation">格框内图片旋转</label>
+          <h2 data-i18n="panelSectionTitle">漫画分格</h2>
+
+            <label for="panel-image-rotation" data-i18n="panelImageRotationLabel">格框内图片旋转</label>
           <input
             id="panel-image-rotation"
             type="range"
@@ -58,7 +59,7 @@
             max="180"
             value="0"
           />
-          <p class="hint">在漫画页框内ctrl+鼠标左键拖拽可切分格框，鼠标左键拖动画格，右键拖动格内图。</p>
+          <p class="hint" data-i18n="panelHint">在漫画页框内ctrl+鼠标左键拖拽可切分格框，鼠标左键拖动画格，右键拖动格内图。</p>
         </div>
         <input
           id="hidden-panel-image-input"
@@ -66,52 +67,52 @@
           type="file"
           accept="image/*"
         />
-          <label for="panel-margin-horizontal">漫画页框左右间距</label>
+          <label for="panel-margin-horizontal" data-i18n="panelMarginHorizontalLabel">漫画页框左右间距</label>
           <input
             id="panel-margin-horizontal"
             type="number"
             min="0"
             value="60"
           />
-          <label for="panel-margin-vertical">漫画页框上下间距</label>
+          <label for="panel-margin-vertical" data-i18n="panelMarginVerticalLabel">漫画页框上下间距</label>
           <input
             id="panel-margin-vertical"
             type="number"
             min="0"
             value="60"
           />
-          <label for="panel-line-width">漫画格框线条</label>
+          <label for="panel-line-width" data-i18n="panelLineWidthLabel">漫画格框线条</label>
           <input
             id="panel-line-width"
             type="number"
             min="1"
             value="4"
           />
-          <label for="panel-gap-horizontal">横向间隙</label>
+          <label for="panel-gap-horizontal" data-i18n="panelGapHorizontalLabel">横向间隙</label>
           <input
             id="panel-gap-horizontal"
             type="number"
             min="0"
             value="16"
           />
-          <label for="panel-gap-vertical">纵向间隙</label>
+          <label for="panel-gap-vertical" data-i18n="panelGapVerticalLabel">纵向间隙</label>
           <input
             id="panel-gap-vertical"
             type="number"
             min="0"
             value="24"
           />
-          <label for="panel-frame-color">格框外部颜色</label>
+          <label for="panel-frame-color" data-i18n="panelFrameColorLabel">格框外部颜色</label>
           <select id="panel-frame-color">
-            <option value="white" selected>白色</option>
-            <option value="black">黑色</option>
+            <option value="white" selected data-i18n="panelFrameWhite">白色</option>
+            <option value="black" data-i18n="panelFrameBlack">黑色</option>
           </select>
         
       </aside>
 
       <main id="editor">
         <div id="viewport">
-          <div id="placeholder" class="no-image-placeholder">请先导入漫画图片</div>
+          <div id="placeholder" class="no-image-placeholder" data-i18n="placeholderText">请先导入漫画图片</div>
           <div id="scene">
             <img id="base-image" alt="" />
             <div id="panel-layer">
@@ -132,17 +133,19 @@
       </main>
 
       <aside class="controls" id="right-panel">
-        <h2>文字样式</h2>
+        <div class="language-toggle-container">
+          <button id="language-toggle" class="secondary" type="button" data-i18n="languageToggle">English</button>
+        </div>
         <div class="section">
-          <label for="font-family">文字选择</label>
+          <label for="font-family" data-i18n="fontFamilyLabel">文字选择</label>
           <select id="font-family">
-            <option value="'Microsoft YaHei', '微软雅黑', sans-serif">微软雅黑</option>
-            <option value="'SimHei', '黑体', sans-serif">黑体</option>
-            <option value="'NSimSun', '新宋体', serif">新宋体</option>
+            <option value="'Microsoft YaHei', '微软雅黑', sans-serif" data-i18n="fontOptionYaHei">微软雅黑</option>
+            <option value="'SimHei', '黑体', sans-serif" data-i18n="fontOptionHei">黑体</option>
+            <option value="'NSimSun', '新宋体', serif" data-i18n="fontOptionSimSun">新宋体</option>
           </select>
         </div>
         <div class="section">
-          <label for="font-size">字号</label>
+          <label for="font-size" data-i18n="fontSizeLabel">字号</label>
           <input id="font-size" type="number" min="10" max="120" value="32" />
         </div>
         <div class="section">
@@ -151,19 +154,20 @@
             class="secondary"
             type="button"
             data-active="false"
+            data-i18n="toggleBold"
           >字体加粗</button>
         </div>
         <div class="section">
-          <label for="text-content">框内输入</label>
+          <label for="text-content" data-i18n="textContentLabel">框内输入</label>
           <textarea id="text-content" rows="6" spellcheck="false"></textarea>
         </div>
         <div class="section">
-          <label for="outer-text-content">框外输入</label>
+          <label for="outer-text-content" data-i18n="outerTextContentLabel">框外输入</label>
           <textarea id="outer-text-content" rows="4" spellcheck="false"></textarea>
-          <button id="outer-text-style" class="secondary" type="button" disabled>白字黑边</button>
+          <button id="outer-text-style" class="secondary" type="button" disabled data-i18n="outerTextStyle">白字黑边</button>
         </div>
         <div class="section">
-          <label for="export-format">导出选项</label>
+          <label for="export-format" data-i18n="exportFormatLabel">导出选项</label>
           <select id="export-format">
             <option value="png">PNG</option>
             <option value="jpg">JPG</option>
@@ -171,7 +175,7 @@
           </select>
         </div>
         <div class="section">
-          <button id="export" class="primary" type="button">导出图片</button>
+          <button id="export" class="primary" type="button" data-i18n="exportButton">导出图片</button>
         </div>
       </aside>
     </div>
