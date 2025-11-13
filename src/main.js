@@ -926,7 +926,7 @@ function pro5_computeFontForBubble(bubble) {
     Math.round((bubble?.lineHeight || 1.3) * fontSize)
   );
   const fontWeight = bubble?.bold ? '700' : fallbackBold ? '700' : '400';
-  const textAlign = bubble?.textAlign || 'center'; // 你项目里文本通常居中
+  const textAlign = bubble?.textAlign || 'left'; // 与编辑器默认左对齐保持一致，确保导出所见即所得
   const color = bubble ? getBubbleTextColor(bubble) : BUBBLE_TEXT_DARK;
 
   return { fontFamily, fontSize, lineHeight, fontWeight, textAlign, color };
