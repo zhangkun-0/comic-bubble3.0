@@ -5011,62 +5011,56 @@ async function exportPsdWithAgPsd() {
   const bubbles = Array.isArray(state.bubbles) ? [...state.bubbles] : [];
   const freeTexts = Array.isArray(state.freeTexts) ? [...state.freeTexts] : [];
   const pf = state.pageFrame;
-  const panelMap = pf?.active && Array.isArray(pf.panels)
-    ? new Map(pf.panels.map((panel) => [panel.id, panel]))
-    : new Map();
+  const panelList = Array.isArray(pf?.panels) ? pf.panels : [];
+  const panelMap = new Map(panelList.map((panel) => [panel.id, panel]));
 
-  const children = [];
-
-  // === 1. 矢量文本层（自上而下） ===
+  const textLayers = [];
   bubbles.forEach((bubble) => {
     const textLayer = pro5_buildBubbleTextLayerForPsd(bubble, docSize);
     if (textLayer) {
-      children.push(textLayer);
+      textLayers.push(textLayer);
     }
   });
   freeTexts.forEach((freeText, index) => {
     const textLayer = pro5_buildFreeTextLayerForPsd(freeText, index, docSize);
     if (textLayer) {
-      children.push(textLayer);
+      textLayers.push(textLayer);
     }
   });
 
-  // === 2. 漫画泡泡层（未放入格内的对白气泡） ===
   const floatingBubbles = bubbles.filter((bubble) => bubble.panelId == null);
   const floatingBubbleLayer = pro5_buildBubbleBodiesLayer(
     '漫画泡泡',
     floatingBubbles,
     { clipToPanel: false, panelMap, size: docSize }
   );
-  if (floatingBubbleLayer) {
-    children.push(floatingBubbleLayer);
-  }
-
-  // === 3. 漫画格框层 ===
   const frameLayer = pro5_buildPanelFrameLayer(pf, docSize);
-  if (frameLayer) {
-    children.push(frameLayer);
-  }
-
-  // === 4. 被放入漫画格内的漫画泡泡层（若存在） ===
   const panelBubbles = bubbles.filter((bubble) => bubble.panelId != null);
   const panelBubbleLayer = pro5_buildBubbleBodiesLayer(
     '格内漫画泡泡',
     panelBubbles,
     { clipToPanel: true, panelMap, size: docSize }
   );
-  if (panelBubbleLayer) {
-    children.push(panelBubbleLayer);
-  }
-
-  // === 5. 漫画格内图片层（包含底图 + 各格内图片） ===
   const panelImageLayer = await pro5_buildPanelImageLayer(pf, docSize);
+  const backgroundLayer = pro5_buildSolidBackgroundLayer(docSize);
+
+  const children = [];
+  if (backgroundLayer) {
+    children.push(backgroundLayer);
+  }
   if (panelImageLayer) {
     children.push(panelImageLayer);
   }
-
-  // === 6. 白色底部背景 ===
-  children.push(pro5_buildSolidBackgroundLayer(docSize));
+  if (panelBubbleLayer) {
+    children.push(panelBubbleLayer);
+  }
+  if (frameLayer) {
+    children.push(frameLayer);
+  }
+  if (floatingBubbleLayer) {
+    children.push(floatingBubbleLayer);
+  }
+  textLayers.forEach((layer) => children.push(layer));
 
   const psdObj = {
     width,
@@ -5130,6 +5124,105 @@ function pro5_colorHexToRgb(color) {
   return { r: 0, g: 0, b: 0 };
 }
 
+function pro5_engineNumber(value, options = {}) {
+  if (!Number.isFinite(value)) {
+    return '0';
+  }
+  const { allowNegative = true } = options;
+  const clamped = allowNegative ? value : Math.max(0, value);
+  let formatted = Number(clamped).toFixed(6);
+  formatted = formatted.replace(/\.0+$/, '');
+  formatted = formatted.replace(/(\.\d*?)0+$/, '$1');
+  if (formatted === '-0') {
+    return '0';
+  }
+  return formatted;
+}
+
+function pro5_escapeEngineText(text) {
+  return String(text)
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+}
+
+function pro5_buildTextEngineData({
+  text,
+  fontFamily,
+  fontSize,
+  leading,
+  align,
+  color,
+  fauxBold,
+}) {
+  const { r, g, b } = color;
+  const alignMap = { left: 0, center: 1, right: 2 };
+  const justification = alignMap[align] ?? 0;
+  const rgbaValues = [r / 255, g / 255, b / 255, 1]
+    .map((component) => pro5_engineNumber(component, { allowNegative: false }))
+    .join(' ');
+  const escapedText = pro5_escapeEngineText(text);
+  const fauxBoldFlag = fauxBold ? 1 : 0;
+  const leadingValue = leading && Number.isFinite(leading) ? leading : fontSize * 1.2;
+  const lines = [
+    'EngineData = {',
+    '\tEngineDict = {',
+    '\t\tEditor = 1;',
+    '\t\tParagraphRun = {',
+    '\t\t\tCount = 1;',
+    '\t\t\tRunArray = [',
+    '\t\t\t\t{',
+    '\t\t\t\t\tParagraphSheet = {',
+    '\t\t\t\t\t\tDefaultStyleSheet = {',
+    '\t\t\t\t\t\t\tProperties = {',
+    `\t\t\t\t\t\t\t\tJustification = ${justification};`,
+    '\t\t\t\t\t\t\t};',
+    '\t\t\t\t\t\t};',
+    '\t\t\t\t\t};',
+    `\t\t\t\t\tLength = ${text.length};`,
+    '\t\t\t\t}',
+    '\t\t\t];',
+    '\t\t};',
+    '\t\tStyleRun = {',
+    '\t\t\tCount = 1;',
+    '\t\t\tRunArray = [',
+    '\t\t\t\t{',
+    '\t\t\t\t\tStyleSheet = {',
+    '\t\t\t\t\t\tStyleSheetData = {',
+    '\t\t\t\t\t\t\tAutoLeading = 1;',
+    '\t\t\t\t\t\t\tBaselineShift = 0;',
+    '\t\t\t\t\t\t\tFontCaps = 0;',
+    '\t\t\t\t\t\t\tFont = 0;',
+    `\t\t\t\t\t\t\tFontSize = ${pro5_engineNumber(fontSize, { allowNegative: false })};`,
+    `\t\t\t\t\t\t\tFauxBold = ${fauxBoldFlag};`,
+    `\t\t\t\t\t\t\tLeading = ${pro5_engineNumber(leadingValue, { allowNegative: false })};`,
+    '\t\t\t\t\t\t\tTracking = 0;',
+    `\t\t\t\t\t\t\tFillColor = { Type = 0; Values = [${rgbaValues}]; };`,
+    '\t\t\t\t\t\t\tHorizontalScale = 1;',
+    '\t\t\t\t\t\t\tVerticalScale = 1;',
+    '\t\t\t\t\t\t};',
+    '\t\t\t\t\t};',
+    `\t\t\t\t\tLength = ${text.length};`,
+    '\t\t\t\t}',
+    '\t\t\t];',
+    '\t\t};',
+    '\t\tDocumentResources = {',
+    '\t\t\tFontSet = [',
+    `\t\t\t\t{ Name = "${pro5_escapeEngineText(fontFamily)}"; Script = 0; Type = 0; };`,
+    '\t\t\t];',
+    '\t\t};',
+    '\t\tResourceDict = {',
+    '\t\t\tFontSet = [',
+    `\t\t\t\t{ Name = "${pro5_escapeEngineText(fontFamily)}"; Script = 0; Type = 0; };`,
+    '\t\t\t];',
+    '\t\t};',
+    `\t\tText = (${escapedText});`,
+    '\t};',
+    '};',
+  ];
+  return lines.join('\r\n');
+}
+
 function pro5_buildBubbleTextLayerForPsd(bubble, size) {
   const rawText = pro5_getBubbleText(bubble);
   if (!rawText) return null;
@@ -5151,6 +5244,23 @@ function pro5_buildBubbleTextLayerForPsd(bubble, size) {
   const right = Math.min(size.width, Math.round(rect.x + rect.width));
   const bottom = Math.min(size.height, Math.round(rect.y + rect.height));
   const fauxBold = fontWeight === '700' || fontWeight === 'bold' || fontWeight === 700;
+  const engineData = pro5_buildTextEngineData({
+    text: psdText,
+    fontFamily,
+    fontSize,
+    leading: lineHeight,
+    align,
+    color: { r, g, b },
+    fauxBold,
+  });
+  const baseFontEntry = {
+    name: fontFamily,
+    family: fontFamily,
+    style: fauxBold ? 'Bold' : 'Regular',
+    postScriptName: fontFamily,
+    script: 0,
+    type: 0,
+  };
 
   return {
     name: `文字-${bubble.id ?? ''}`,
@@ -5165,6 +5275,7 @@ function pro5_buildBubbleTextLayerForPsd(bubble, size) {
     type: 'textLayer',
     text: {
       text: psdText,
+      fonts: [baseFontEntry],
       transform: { xx: 1, xy: 0, yx: 0, yy: 1, tx: left, ty: top },
       bounds: { left, top, right, bottom },
       orientation: 'horizontal',
@@ -5172,6 +5283,9 @@ function pro5_buildBubbleTextLayerForPsd(bubble, size) {
       style: {
         font: {
           name: fontFamily,
+          postScriptName: fontFamily,
+          family: fontFamily,
+          style: fauxBold ? 'Bold' : 'Regular',
           sizes: [fontSize],
           colors: [[r / 255, g / 255, b / 255, 1]],
           alignment: [align],
@@ -5194,6 +5308,7 @@ function pro5_buildBubbleTextLayerForPsd(bubble, size) {
           to: psdText.length,
           style: {
             fontName: fontFamily,
+            fontPostScriptName: fontFamily,
             fontStyleName: fauxBold ? 'Bold' : 'Regular',
             fontSize,
             fillColor: { r: r / 255, g: g / 255, b: b / 255, a: 1 },
@@ -5226,6 +5341,7 @@ function pro5_buildBubbleTextLayerForPsd(bubble, size) {
         perspectiveOther: 0,
         rotate: 0,
       },
+      engineData,
     },
   };
 }
@@ -5308,7 +5424,8 @@ function pro5_buildBubbleBodiesLayer(name, bubbleList, options = {}) {
 }
 
 function pro5_buildPanelFrameLayer(pf, size = pro5_getDocumentSize()) {
-  if (!pf?.active || !Array.isArray(pf.panels) || pf.panels.length === 0) {
+  const panels = Array.isArray(pf?.panels) ? pf.panels : [];
+  if (!panels.length) {
     return null;
   }
   const { width, height } = size;
@@ -5316,13 +5433,13 @@ function pro5_buildPanelFrameLayer(pf, size = pro5_getDocumentSize()) {
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  const frameColor = pf.frameColor === 'black' ? '#000000' : pf.frameColor === 'white' ? '#ffffff' : (pf.frameColor || '#11141b');
+  const frameColor = pf?.frameColor === 'black' ? '#000000' : pf?.frameColor === 'white' ? '#ffffff' : (pf?.frameColor || '#11141b');
   ctx.strokeStyle = frameColor;
-  ctx.lineWidth = pf.lineWidth || 4;
+  ctx.lineWidth = pf?.lineWidth || 4;
   ctx.lineJoin = 'miter';
   ctx.lineCap = 'butt';
 
-  pf.panels.forEach((panel) => {
+  panels.forEach((panel) => {
     ctx.strokeRect(panel.x, panel.y, panel.width, panel.height);
   });
 
@@ -5330,8 +5447,9 @@ function pro5_buildPanelFrameLayer(pf, size = pro5_getDocumentSize()) {
 }
 
 async function pro5_buildPanelImageLayer(pf, size = pro5_getDocumentSize()) {
+  const panels = Array.isArray(pf?.panels) ? pf.panels : [];
   const hasBaseImage = !!(state?.image?.src);
-  const hasPanelImages = !!(pf?.active && Array.isArray(pf.panels) && pf.panels.some((panel) => panel.image && panel.image.src));
+  const hasPanelImages = panels.some((panel) => panel.image && panel.image.src);
   if (!hasBaseImage && !hasPanelImages) {
     return null;
   }
@@ -5356,7 +5474,7 @@ async function pro5_buildPanelImageLayer(pf, size = pro5_getDocumentSize()) {
   }
 
   if (hasPanelImages) {
-    const panelMap = new Map(pf.panels.map((panel) => [panel.id, panel]));
+    const panelMap = new Map(panels.map((panel) => [panel.id, panel]));
     for (const panel of panelMap.values()) {
       if (!panel.image || !panel.image.src) continue;
       try {
