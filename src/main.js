@@ -4225,12 +4225,13 @@ async function drawImageToCanvas(ctx, src, width, height) {
 }
 
 function drawBubblesToContext(ctx, options = {}) {
-  const { includeText = true, includeBodies = true } = options;
+  const { includeText = true, includeBodies = true, targetBubbleId = null } = options;
   const pf = state.pageFrame;
   const panelsById = pf.active
     ? new Map(pf.panels.map((panel) => [panel.id, panel]))
     : null;
   state.bubbles.forEach((bubble) => {
+    if (targetBubbleId != null && bubble.id !== targetBubbleId) return;
     ctx.save();
     if (panelsById && bubble.panelId != null) {
       const panel = panelsById.get(bubble.panelId);
@@ -5005,15 +5006,62 @@ async function exportPsdWithAgPsd() {
   const ag = await import(moduleUrl);
   const writePsd = ag.writePsd || ag.default?.writePsd;
   if (!writePsd) throw new Error('ag-psd writePsd not found');
-  const { createCanvas, Canvas } = await import('https://unpkg.com/canvas-for-psd');
-
   const width = state.canvas.width;
   const height = state.canvas.height;
 
   // Build PSD structure with proper layer order and complete metadata
   const children = [];
 
-  // 1) Background layer (if exists)
+  const createRasterLayer = (name, imageData, bounds = {}) => {
+    const layerWidth = imageData.width;
+    const layerHeight = imageData.height;
+    const top = Math.round(bounds.top ?? 0);
+    const left = Math.round(bounds.left ?? 0);
+    const right = Math.round(bounds.right ?? left + layerWidth);
+    const bottom = Math.round(bounds.bottom ?? top + layerHeight);
+    return {
+      name,
+      top,
+      left,
+      right,
+      bottom,
+      opacity: 255,
+      visible: true,
+      clipping: false,
+      channels: [{}, {}, {}, {}],
+      imageData: {
+        width: layerWidth,
+        height: layerHeight,
+        data: new Uint8Array(imageData.data.buffer.slice(0)),
+      },
+    };
+  };
+
+  const loadImageElement = (src) => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+
+  // Background: always push a white background so PSD has explicit base layer
+  const backgroundCanvas = document.createElement('canvas');
+  backgroundCanvas.width = width;
+  backgroundCanvas.height = height;
+  const backgroundCtx = backgroundCanvas.getContext('2d');
+  backgroundCtx.fillStyle = '#ffffff';
+  backgroundCtx.fillRect(0, 0, width, height);
+  const backgroundData = backgroundCtx.getImageData(0, 0, width, height);
+  const backgroundLayer = createRasterLayer('白背景', backgroundData, {
+    top: 0,
+    left: 0,
+    right: width,
+    bottom: height,
+  });
+
+  // Base image layer (if present)
+  let baseImageLayer = null;
   if (state.image && state.image.src) {
     const baseCanvas = document.createElement('canvas');
     baseCanvas.width = width;
@@ -5021,164 +5069,225 @@ async function exportPsdWithAgPsd() {
     const baseCtx = baseCanvas.getContext('2d');
     baseCtx.drawImage(elements.baseImage, 0, 0, width, height);
     const baseData = baseCtx.getImageData(0, 0, width, height);
-    children.push({
-      name: '底图',
-      top: 0, left: 0, right: width, bottom: height,
-      opacity: 255,
-      channels: [{}, {}, {}, {}],
-      imageData: { width, height, data: new Uint8Array(baseData.data.buffer.slice(0)) }
+    baseImageLayer = createRasterLayer('底图', baseData, {
+      top: 0,
+      left: 0,
+      right: width,
+      bottom: height,
     });
   }
 
-  // 2) Panel frames and their images
   const pf = state.pageFrame;
-  if (pf?.active && Array.isArray(pf.panels)) {
-    for (const panel of pf.panels) {
-      // Panel image layer (if exists)
-      if (panel.image && panel.image.src) {
-        const pCanvas = document.createElement('canvas');
-        pCanvas.width = width;
-        pCanvas.height = height;
-        const pCtx = pCanvas.getContext('2d');
-        
-        // Clip to panel bounds
-        pCtx.save();
-        pCtx.beginPath();
-        pCtx.rect(panel.x, panel.y, panel.width, panel.height);
-        pCtx.clip();
+  const panels = pf?.active && Array.isArray(pf.panels) ? pf.panels : [];
 
-        // Draw panel image with transforms
-        const img = new Image();
-        img.src = panel.image.src;
-        const scale = panel.image.scale ?? 1;
-        const rotDeg = panel.image.rotation ?? 0;
-        const offX = panel.image.offsetX ?? 0;
-        const offY = panel.image.offsetY ?? 0;
+  // Aggregate panel images into a single layer
+  let panelImageLayer = null;
+  if (panels.some((panel) => panel.image && panel.image.src)) {
+    const panelCanvas = document.createElement('canvas');
+    panelCanvas.width = width;
+    panelCanvas.height = height;
+    const panelCtx = panelCanvas.getContext('2d');
+    let hasPanelPixels = false;
 
-        const cx = panel.x + panel.width / 2 + offX;
-        const cy = panel.y + panel.height / 2 + offY;
+    for (const panel of panels) {
+      const panelImage = panel.image;
+      if (!panelImage || !panelImage.src) continue;
 
-        pCtx.translate(cx, cy);
-        pCtx.rotate((rotDeg * Math.PI) / 180);
-        pCtx.scale(scale, scale);
-        pCtx.drawImage(img, -img.width/2, -img.height/2, img.width, img.height);
-        pCtx.restore();
+      panelCtx.save();
+      panelCtx.beginPath();
+      panelCtx.rect(panel.x, panel.y, panel.width, panel.height);
+      panelCtx.clip();
 
-        const pData = pCtx.getImageData(0, 0, width, height);
-        children.push({
-          name: `格内图-${panel.id}`,
-          top: 0, left: 0, right: width, bottom: height,
-          opacity: 255,
-          channels: [{}, {}, {}, {}],
-          imageData: { width, height, data: new Uint8Array(pData.data.buffer.slice(0)) }
-        });
+      try {
+        const img = await loadImageElement(panelImage.src);
+        const scale = panelImage.scale ?? 1;
+        const rotation = panelImage.rotation ?? 0;
+        const offsetX = panelImage.offsetX ?? 0;
+        const offsetY = panelImage.offsetY ?? 0;
+
+        const cx = panel.x + panel.width / 2 + offsetX;
+        const cy = panel.y + panel.height / 2 + offsetY;
+
+        panelCtx.translate(cx, cy);
+        panelCtx.rotate((rotation * Math.PI) / 180);
+        panelCtx.scale(scale, scale);
+
+        const drawWidth = panelImage.width || img.width;
+        const drawHeight = panelImage.height || img.height;
+        panelCtx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+        hasPanelPixels = true;
+      } catch (err) {
+        console.warn('Failed to draw panel image for PSD export:', err);
+      } finally {
+        panelCtx.restore();
       }
+    }
 
-      // Panel frame layer
-      const frameCanvas = document.createElement('canvas');
-      frameCanvas.width = width;
-      frameCanvas.height = height;
-      const frameCtx = frameCanvas.getContext('2d');
-      frameCtx.strokeStyle = '#10131c';
-      frameCtx.lineWidth = pf.lineWidth || 4;
-      frameCtx.strokeRect(panel.x, panel.y, panel.width, panel.height);
-      const frameData = frameCtx.getImageData(0, 0, width, height);
-      children.push({
-        name: `格框-${panel.id}`,
-        top: Math.round(panel.y),
-        left: Math.round(panel.x),
-        right: Math.round(panel.x + panel.width),
-        bottom: Math.round(panel.y + panel.height),
-        opacity: 255,
-        visible: true,
-        clipping: false,
-        channels: [{}, {}, {}, {}],
-        imageData: { width, height, data: new Uint8Array(frameData.data.buffer.slice(0)) }
+    if (hasPanelPixels) {
+      const panelImageData = panelCtx.getImageData(0, 0, width, height);
+      panelImageLayer = createRasterLayer('格内图片', panelImageData, {
+        top: 0,
+        left: 0,
+        right: width,
+        bottom: height,
       });
     }
   }
 
-  // 3) Speech bubbles and text layers
+  // Draw panel frames on a dedicated layer
+  let panelFrameLayer = null;
+  if (panels.length) {
+    const frameCanvas = document.createElement('canvas');
+    frameCanvas.width = width;
+    frameCanvas.height = height;
+    const frameCtx = frameCanvas.getContext('2d');
+    frameCtx.strokeStyle = '#10131c';
+    frameCtx.lineWidth = pf.lineWidth || 4;
+    frameCtx.lineJoin = 'miter';
+    frameCtx.lineCap = 'butt';
+
+    let hasFrame = false;
+    for (const panel of panels) {
+      frameCtx.strokeRect(panel.x, panel.y, panel.width, panel.height);
+      hasFrame = true;
+    }
+
+    if (hasFrame) {
+      const frameData = frameCtx.getImageData(0, 0, width, height);
+      panelFrameLayer = createRasterLayer('漫画格框', frameData, {
+        top: 0,
+        left: 0,
+        right: width,
+        bottom: height,
+      });
+    }
+  }
+
+  const bubbleLayers = [];
+  const panelBubbleLayers = [];
+  const textLayers = [];
+
   if (Array.isArray(state.bubbles)) {
     for (const bubble of state.bubbles) {
-      // Bubble shape layer
       const bubbleCanvas = document.createElement('canvas');
       bubbleCanvas.width = width;
       bubbleCanvas.height = height;
       const bubbleCtx = bubbleCanvas.getContext('2d');
-      drawBubblesToContext(bubbleCtx, { includeText: false, includeBodies: true });
-      const bubbleData = bubbleCtx.getImageData(0, 0, width, height);
-      children.push({
-        name: `气泡-${bubble.id}`,
-        top: 0, left: 0, right: width, bottom: height,
-        opacity: 255,
-        channels: [{}, {}, {}, {}],
-        imageData: { width, height, data: new Uint8Array(bubbleData.data.buffer.slice(0)) }
+      drawBubblesToContext(bubbleCtx, {
+        includeText: false,
+        includeBodies: true,
+        targetBubbleId: bubble.id,
       });
-
-      // Text layer with enhanced metadata for Photoshop compatibility
-      const text = pro5_getBubbleText(bubble);
-      if (text) {
-        const rect = getTextRect(bubble);
-        if (rect) {
-          const lines = pro5_domWrapLines(text, bubble.fontFamily, bubble.fontSize, bubble.bold, Math.max(1, Math.round(rect.width)), state.pro5_autoWrapEnabled);
-          const display = lines.join('\n');
-          const colorHex = getBubbleTextColor(bubble);
-          const toRgb = (h) => { if(!h) return {r:0,g:0,b:0}; h=String(h).replace('#',''); if(h.length===3) return {r:parseInt(h[0]+h[0],16),g:parseInt(h[1]+h[1],16),b:parseInt(h[2]+h[2],16)}; return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)} };
-          const { r, g, b } = toRgb(colorHex);
-
-          // Enhanced text layer structure for better Photoshop compatibility
-          const textLayer = {
-            name: `文字-${bubble.id}`,
-            top: Math.round(rect.y),
-            left: Math.round(rect.x),
-            right: Math.round(rect.x + rect.width),
-            bottom: Math.round(rect.y + rect.height),
-            opacity: 255,
-            visible: true,
-            clipping: false,
-            type: 'textLayer',
-            text: {
-              text: display,
-              transform: { xx: 1, xy: 0, yx: 0, yy: 1, tx: Math.round(rect.x), ty: Math.round(rect.y) },
-              style: {
-                font: {
-                  name: bubble.fontFamily || state.fontFamily,
-                  sizes: [bubble.fontSize || state.fontSize],
-                  colors: [[r, g, b]],
-                  alignment: ['center']
-                },
-                fontSize: bubble.fontSize || state.fontSize,
-                fontFamily: bubble.fontFamily || state.fontFamily,
-                fontWeight: bubble.bold ? 'bold' : 'normal',
-                fillColor: { r, g, b },
-                justification: 'center'
-              },
-              engine: {
-                version: 50,
-                descriptionVersion: 2,
-                leading: Math.round((bubble.lineHeight || Math.round((bubble.fontSize||state.fontSize) * 1.2))),
-                tracking: 0,
-                textGridding: 'none',
-                paragraphStyle: { justification: 2 },
-                writingDirection: 0,
-                fontPostScriptName: bubble.fontFamily || state.fontFamily,
-                renderingIntent: 2
-              },
-              warp: {
-                style: 'none',
-                value: 0,
-                perspective: 0,
-                perspectiveOther: 0,
-                rotate: 0
-              }
-            }
-          };
-          children.push(textLayer);
-        }
+      const bubbleData = bubbleCtx.getImageData(0, 0, width, height);
+      const bubbleLayer = createRasterLayer(
+        bubble.panelId != null ? `格内气泡-${bubble.id}` : `漫画气泡-${bubble.id}`,
+        bubbleData,
+        { top: 0, left: 0, right: width, bottom: height },
+      );
+      if (bubble.panelId != null) {
+        panelBubbleLayers.push(bubbleLayer);
+      } else {
+        bubbleLayers.push(bubbleLayer);
       }
+
+      const text = pro5_getBubbleText(bubble);
+      if (!text) continue;
+      const rect = getTextRect(bubble);
+      if (!rect) continue;
+      const lines = pro5_domWrapLines(
+        text,
+        bubble.fontFamily,
+        bubble.fontSize,
+        bubble.bold,
+        Math.max(1, Math.round(rect.width)),
+        state.pro5_autoWrapEnabled,
+      );
+      const display = lines.join('\n');
+      const colorHex = getBubbleTextColor(bubble);
+      const toRgb = (h) => {
+        if (!h) return { r: 0, g: 0, b: 0 };
+        const hex = String(h).replace('#', '');
+        if (hex.length === 3) {
+          return {
+            r: parseInt(hex[0] + hex[0], 16),
+            g: parseInt(hex[1] + hex[1], 16),
+            b: parseInt(hex[2] + hex[2], 16),
+          };
+        }
+        return {
+          r: parseInt(hex.slice(0, 2), 16),
+          g: parseInt(hex.slice(2, 4), 16),
+          b: parseInt(hex.slice(4, 6), 16),
+        };
+      };
+      const { r, g, b } = toRgb(colorHex);
+
+      const textLayer = {
+        name: `文字-${bubble.id}`,
+        top: Math.round(rect.y),
+        left: Math.round(rect.x),
+        right: Math.round(rect.x + rect.width),
+        bottom: Math.round(rect.y + rect.height),
+        opacity: 255,
+        visible: true,
+        clipping: false,
+        type: 'textLayer',
+        text: {
+          text: display,
+          transform: { xx: 1, xy: 0, yx: 0, yy: 1, tx: Math.round(rect.x), ty: Math.round(rect.y) },
+          style: {
+            font: {
+              name: bubble.fontFamily || state.fontFamily,
+              sizes: [bubble.fontSize || state.fontSize],
+              colors: [[r, g, b]],
+              alignment: ['center'],
+            },
+            fontSize: bubble.fontSize || state.fontSize,
+            fontFamily: bubble.fontFamily || state.fontFamily,
+            fontWeight: bubble.bold ? 'bold' : 'normal',
+            fillColor: { r, g, b },
+            justification: 'center',
+          },
+          engine: {
+            version: 50,
+            descriptionVersion: 2,
+            leading: Math.round(
+              bubble.lineHeight || Math.round((bubble.fontSize || state.fontSize) * 1.2),
+            ),
+            tracking: 0,
+            textGridding: 'none',
+            paragraphStyle: { justification: 2 },
+            writingDirection: 0,
+            fontPostScriptName: bubble.fontFamily || state.fontFamily,
+            renderingIntent: 2,
+          },
+          warp: {
+            style: 'none',
+            value: 0,
+            perspective: 0,
+            perspectiveOther: 0,
+            rotate: 0,
+          },
+        },
+      };
+      textLayers.push(textLayer);
     }
   }
+
+  // Assemble layers from bottom (first) to top (last)
+  children.push(backgroundLayer);
+  if (baseImageLayer) {
+    children.push(baseImageLayer);
+  }
+  if (panelImageLayer) {
+    children.push(panelImageLayer);
+  }
+  panelBubbleLayers.forEach((layer) => children.push(layer));
+  if (panelFrameLayer) {
+    children.push(panelFrameLayer);
+  }
+  bubbleLayers.forEach((layer) => children.push(layer));
+  textLayers.forEach((layer) => children.push(layer));
 
   const psdObj = {
     width,
