@@ -10,9 +10,12 @@ const elements = {
   insertBubble: document.getElementById('insert-bubble'),
   removeBubble: document.getElementById('remove-bubble'),
   placeBubbleIntoPanel: document.getElementById('place-bubble-into-panel'),
+  importAssetButton: document.getElementById('import-asset'),
+  hiddenAssetInput: document.getElementById('hidden-asset-input'),
   viewport: document.getElementById('viewport'),
   scene: document.getElementById('scene'),
   bubbleLayer: document.getElementById('bubble-layer'),
+  assetLayer: document.getElementById('asset-layer'),
   baseImage: document.getElementById('base-image'),
   placeholder: document.getElementById('placeholder'),
   selectionOverlay: document.getElementById('selection-overlay'),
@@ -59,6 +62,7 @@ const BUBBLE_TEXT_DARK = '#11141b';
 const BUBBLE_TEXT_LIGHT = '#ffffff';
 const FREE_TEXT_STROKE_WIDTH = 4;
 const FREE_TEXT_DEFAULT_STYLE = 'dark';
+const ASSET_MIN_SIZE = 32;
 
 const state = {
   canvas: { width: 1200, height: 1600 },
@@ -66,10 +70,13 @@ const state = {
   viewport: { zoom: 1, offsetX: 0, offsetY: 0 },
   bubbles: [],
   freeTexts: [],
+  assets: [],
   nextBubbleId: 1,
   nextFreeTextId: 1,
+  nextAssetId: 1,
   selectedBubbleId: null,
   selectedFreeTextId: null,
+  selectedAssetId: null,
   defaultStrokeWidth: 2,
   defaultBubbleFillColor: BUBBLE_FILL_DEFAULT,
   fontFamily: elements.fontFamily.value,
@@ -126,6 +133,7 @@ const I18N_STRINGS = {
   appTitle: { zh: '漫画气泡', en: 'Comic Bubbles' },
   appHeading: { zh: '漫画气泡', en: 'Comic Bubbles' },
   importImage: { zh: '导入图片', en: 'Import Image' },
+  importAsset: { zh: '导入素材图', en: 'Import Asset Image' },
   bubbleTypeLabel: { zh: '对话框选择', en: 'Bubble Type' },
   bubbleOptionSpeech: { zh: '对白气泡', en: 'Speech Bubble' },
   bubbleOptionThought: { zh: '思想气泡', en: 'Thought Bubble' },
@@ -172,6 +180,10 @@ const I18N_STRINGS = {
     zh: '位置：({x}, {y}) 尺寸：{width}×{height}',
     en: 'Position: ({x}, {y}) Size: {width}×{height}',
   },
+  positionIndicatorAsset: {
+    zh: '位置：({x}, {y}) 尺寸：{width}×{height}',
+    en: 'Position: ({x}, {y}) Size: {width}×{height}',
+  },
   positionIndicatorFreeText: {
     zh: '位置：({x}, {y}) 旋转：{rotation}°',
     en: 'Position: ({x}, {y}) Rotation: {rotation}°',
@@ -204,7 +216,7 @@ function updateZoomIndicator(zoom) {
 function setBubblePositionIndicator(bubble) {
   if (!elements.positionIndicator) return;
   if (!bubble) {
-    if (!getSelectedFreeText()) {
+    if (!getSelectedFreeText() && !getSelectedAsset()) {
       elements.positionIndicator.textContent = '';
     }
     return;
@@ -217,10 +229,31 @@ function setBubblePositionIndicator(bubble) {
   });
 }
 
+function setAssetPositionIndicator(asset) {
+  if (!elements.positionIndicator) return;
+  if (!asset) {
+    if (!getSelectedBubble() && !getSelectedFreeText()) {
+      elements.positionIndicator.textContent = '';
+    }
+    return;
+  }
+  elements.positionIndicator.textContent = t('positionIndicatorAsset', {
+    x: formatIndicatorNumber(asset.x),
+    y: formatIndicatorNumber(asset.y),
+    width: formatIndicatorNumber(asset.width),
+    height: formatIndicatorNumber(asset.height),
+  });
+}
+
 function refreshPositionIndicator() {
   const bubble = getSelectedBubble();
   if (bubble) {
     setBubblePositionIndicator(bubble);
+    return;
+  }
+  const asset = getSelectedAsset();
+  if (asset) {
+    setAssetPositionIndicator(asset);
     return;
   }
   updateFreeTextIndicator(getSelectedFreeText());
@@ -539,6 +572,7 @@ function pro5_mountRightPanelControls() {
 
 
 let imagePickerInFlight = false;
+let assetPickerInFlight = false;
 
 function init() {
   setupSelectionOverlay();
@@ -600,6 +634,8 @@ function attachEvents() {
 
   elements.importButton?.addEventListener('click', handleImportButtonClick);
   elements.hiddenImageInput?.addEventListener('change', handleImageSelection);
+  elements.importAssetButton?.addEventListener('click', handleImportAssetButtonClick);
+  elements.hiddenAssetInput?.addEventListener('change', handleAssetImageSelection);
   elements.insertBubble?.addEventListener('click', insertBubbleFromControls);
   elements.removeBubble?.addEventListener('click', removeSelectedBubble);
   elements.placeBubbleIntoPanel?.addEventListener('click', placeSelectedBubbleIntoPanel);
@@ -623,6 +659,7 @@ function attachEvents() {
   elements.bubbleLayer?.addEventListener('dblclick', handleBubbleDoubleClick);
 
   elements.freeTextLayer?.addEventListener('pointerdown', handleFreeTextPointerDown);
+  elements.assetLayer?.addEventListener('pointerdown', handleAssetPointerDown);
 
   elements.panelLayer?.addEventListener('pointerdown', handlePanelPointerDown);
   elements.panelLayer?.addEventListener('wheel', handlePanelWheel, { passive: false });
@@ -653,6 +690,10 @@ function handleImportButtonClick() {
   openImagePicker();
 }
 
+function handleImportAssetButtonClick() {
+  openAssetPicker();
+}
+
 function handleViewportDoubleClick(event) {
   const target = event.target;
     // 如果双击发生在分镜层或分镜图片层内，直接退出，避免和“面板插图”混淆
@@ -674,10 +715,75 @@ function handleViewportDoubleClick(event) {
   if (target instanceof Element && target.closest('[data-free-text-id]')) {
     return;
   }
+  if (target instanceof Element && target.closest('[data-asset-id]')) {
+    return;
+  }
   if (state.inlineEditingBubbleId) {
     return;
   }
   openImagePicker();
+}
+
+function handleAssetImageSelection(event) {
+  const files = Array.from(event.target.files || []);
+  event.target.value = '';
+  if (!files.length) return;
+  files.reduce(
+    (promise, file) =>
+      promise.then(() => importAssetFromFile(file)),
+    Promise.resolve(),
+  );
+}
+
+function importAssetFromFile(file) {
+  return readFileAsDataURL(file)
+    .then((dataUrl) => createAssetFromDataUrl(dataUrl))
+    .catch((error) => {
+      console.error('读取素材图片失败', error);
+    });
+}
+
+function createAssetFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      createAssetFromImage(dataUrl, img.naturalWidth, img.naturalHeight);
+      resolve();
+    };
+    img.onerror = () => reject(new Error('无法加载素材图像'));
+    img.src = dataUrl;
+  }).catch((error) => {
+    console.error('导入素材失败', error);
+  });
+}
+
+function createAssetFromImage(dataUrl, naturalWidth, naturalHeight) {
+  const canvasWidth = state.canvas.width || 0;
+  const canvasHeight = state.canvas.height || 0;
+  let width = Math.max(ASSET_MIN_SIZE, Number(naturalWidth) || ASSET_MIN_SIZE);
+  let height = Math.max(ASSET_MIN_SIZE, Number(naturalHeight) || ASSET_MIN_SIZE);
+  if (canvasWidth > 0 && canvasHeight > 0) {
+    const maxWidth = canvasWidth * 0.6;
+    const maxHeight = canvasHeight * 0.6;
+    const scale = Math.min(1, maxWidth / width, maxHeight / height);
+    width = Math.max(ASSET_MIN_SIZE, width * scale);
+    height = Math.max(ASSET_MIN_SIZE, height * scale);
+  }
+  const x = clamp((canvasWidth - width) / 2, 0, Math.max(canvasWidth - width, 0));
+  const y = clamp((canvasHeight - height) / 2, 0, Math.max(canvasHeight - height, 0));
+  const asset = {
+    id: `asset-${state.nextAssetId++}`,
+    src: dataUrl,
+    x,
+    y,
+    width,
+    height,
+  };
+  state.assets.push(asset);
+  setSelectedAsset(asset.id);
+  pushHistory();
+  render();
+  return asset;
 }
 
 function handleImageSelection(event) {
@@ -719,6 +825,37 @@ function openImagePicker() {
     }
   } finally {
     imagePickerInFlight = false;
+  }
+}
+
+function openAssetPicker() {
+  if (assetPickerInFlight) {
+    return;
+  }
+  assetPickerInFlight = true;
+  try {
+    const input = elements.hiddenAssetInput;
+    if (!input) {
+      return;
+    }
+    input.value = '';
+    let pickerShown = false;
+    if (typeof input.showPicker === 'function') {
+      try {
+        input.showPicker();
+        pickerShown = true;
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          return;
+        }
+        console.warn('showPicker 不可用，回退到 click()', error);
+      }
+    }
+    if (!pickerShown) {
+      input.click();
+    }
+  } finally {
+    assetPickerInFlight = false;
   }
 }
 
@@ -1498,6 +1635,7 @@ function setSelectedBubble(id) {
   state.selectedBubbleId = id;
   if (id != null) {
     state.selectedFreeTextId = null;
+    state.selectedAssetId = null;
   }
   updateControlsFromSelection();
   render();
@@ -1509,6 +1647,23 @@ function getSelectedBubble() {
 
 function getSelectedFreeText() {
   return state.freeTexts.find((item) => item.id === state.selectedFreeTextId) || null;
+}
+
+function setSelectedAsset(id) {
+  if (state.inlineEditingBubbleId) {
+    elements.inlineEditor.blur();
+  }
+  state.selectedAssetId = id;
+  if (id != null) {
+    state.selectedBubbleId = null;
+    state.selectedFreeTextId = null;
+  }
+  updateControlsFromSelection();
+  render();
+}
+
+function getSelectedAsset() {
+  return state.assets.find((item) => item.id === state.selectedAssetId) || null;
 }
 
 function normalizeDegrees(angle) {
@@ -1523,7 +1678,7 @@ function normalizeDegrees(angle) {
 function updateFreeTextIndicator(freeText) {
   if (!elements.positionIndicator) return;
   if (!freeText) {
-    if (!getSelectedBubble()) {
+    if (!getSelectedBubble() && !getSelectedAsset()) {
       elements.positionIndicator.textContent = '';
     }
     return;
@@ -1543,6 +1698,7 @@ function setSelectedFreeText(id) {
   state.selectedFreeTextId = id;
   if (id != null) {
     state.selectedBubbleId = null;
+    state.selectedAssetId = null;
   }
   updateControlsFromSelection();
   render();
@@ -1581,6 +1737,17 @@ function removeSelectedFreeText() {
   if (!freeText) return false;
   state.freeTexts = state.freeTexts.filter((item) => item.id !== freeText.id);
   state.selectedFreeTextId = null;
+  pushHistory();
+  render();
+  updateControlsFromSelection();
+  return true;
+}
+
+function removeSelectedAsset() {
+  const asset = getSelectedAsset();
+  if (!asset) return false;
+  state.assets = state.assets.filter((item) => item.id !== asset.id);
+  state.selectedAssetId = null;
   pushHistory();
   render();
   updateControlsFromSelection();
@@ -1771,6 +1938,9 @@ function handleViewportPointerDown(event) {
   if (target.closest('[data-free-text-id]')) {
     return;
   }
+  if (target.closest('[data-asset-id]')) {
+    return;
+  }
   if (state.selectedBubbleId) {
     setSelectedBubble(null);
   }
@@ -1778,6 +1948,9 @@ function handleViewportPointerDown(event) {
     state.selectedFreeTextId = null;
     updateControlsFromSelection();
     render();
+  }
+  if (state.selectedAssetId) {
+    setSelectedAsset(null);
   }
   if (state.inlineEditingBubbleId) {
     elements.inlineEditor.blur();
@@ -1850,6 +2023,31 @@ function handleFreeTextPointerDown(event) {
   }
 }
 
+function handleAssetPointerDown(event) {
+  if (event.button !== 0) return;
+  const target = event.target;
+  const assetElement = target instanceof Element ? target.closest('[data-asset-id]') : null;
+  if (!assetElement) return;
+  event.preventDefault();
+  event.stopPropagation();
+  window.getSelection()?.removeAllRanges();
+  const assetId = assetElement.dataset.assetId;
+  const asset = state.assets.find((item) => item.id === assetId);
+  if (!asset) return;
+  if (state.selectedAssetId !== asset.id) {
+    setSelectedAsset(asset.id);
+  }
+  state.interaction = {
+    type: 'move-asset',
+    pointerId: event.pointerId,
+    assetId: asset.id,
+    startX: event.clientX,
+    startY: event.clientY,
+    assetStart: { x: asset.x, y: asset.y },
+  };
+  elements.viewport?.setPointerCapture(event.pointerId);
+}
+
 function startFreeTextDrag(event, freeText) {
   state.interaction = {
     type: 'move-free-text',
@@ -1881,16 +2079,30 @@ function startResize(event, direction) {
   event.preventDefault();
   event.stopPropagation();
   const bubble = getSelectedBubble();
-  if (!bubble) return;
+  if (bubble) {
+    state.interaction = {
+      type: 'resize',
+      pointerId: event.pointerId,
+      direction,
+      bubbleId: bubble.id,
+      bubbleStart: { x: bubble.x, y: bubble.y, width: bubble.width, height: bubble.height },
+      startX: event.clientX,
+      startY: event.clientY,
+      tailSnapshot: bubble.tail ? cloneTail(bubble.tail) : null,
+    };
+    elements.viewport.setPointerCapture(event.pointerId);
+    return;
+  }
+  const asset = getSelectedAsset();
+  if (!asset) return;
   state.interaction = {
-    type: 'resize',
+    type: 'resize-asset',
     pointerId: event.pointerId,
     direction,
-    bubbleId: bubble.id,
-    bubbleStart: { x: bubble.x, y: bubble.y, width: bubble.width, height: bubble.height },
+    assetId: asset.id,
+    assetStart: { x: asset.x, y: asset.y, width: asset.width, height: asset.height },
     startX: event.clientX,
     startY: event.clientY,
-    tailSnapshot: bubble.tail ? cloneTail(bubble.tail) : null,
   };
   elements.viewport.setPointerCapture(event.pointerId);
 }
@@ -1990,6 +2202,27 @@ function handlePointerMove(event) {
     );
     render();
     updateFreeTextIndicator(freeText);
+  } else if (state.interaction.type === 'move-asset') {
+    const asset = state.assets.find((item) => item.id === state.interaction.assetId);
+    if (!asset) return;
+    const delta = screenDeltaToWorld(
+      event.clientX - state.interaction.startX,
+      event.clientY - state.interaction.startY,
+    );
+    asset.x = state.interaction.assetStart.x + delta.x;
+    asset.y = state.interaction.assetStart.y + delta.y;
+    render();
+    setAssetPositionIndicator(asset);
+  } else if (state.interaction.type === 'resize-asset') {
+    const asset = state.assets.find((item) => item.id === state.interaction.assetId);
+    if (!asset) return;
+    const delta = screenDeltaToWorld(
+      event.clientX - state.interaction.startX,
+      event.clientY - state.interaction.startY,
+    );
+    applyAssetResize(asset, state.interaction.direction, delta);
+    render();
+    setAssetPositionIndicator(asset);
   }
 }
 
@@ -2011,10 +2244,17 @@ function handlePointerUp(event) {
     interactionType === 'tail' ||
     interactionType === 'pro5-handle' ||
     interactionType === 'move-free-text' ||
-    interactionType === 'rotate-free-text'
+    interactionType === 'rotate-free-text' ||
+    interactionType === 'move-asset' ||
+    interactionType === 'resize-asset'
   ) {
     pushHistory();
-    if (interactionType === 'move-free-text' || interactionType === 'rotate-free-text') {
+    if (
+      interactionType === 'move-free-text' ||
+      interactionType === 'rotate-free-text' ||
+      interactionType === 'move-asset' ||
+      interactionType === 'resize-asset'
+    ) {
       updateControlsFromSelection();
     }
   }
@@ -2060,6 +2300,33 @@ function applyResize(bubble, direction, delta) {
   if (state.interaction.tailSnapshot) {
     bubble.tail = cloneTail(state.interaction.tailSnapshot);
   }
+}
+
+function applyAssetResize(asset, direction, delta) {
+  let { x, y, width, height } = state.interaction.assetStart;
+  const minSize = ASSET_MIN_SIZE;
+  if (direction.includes('n')) {
+    const newHeight = clamp(height - delta.y, minSize, Infinity);
+    const diff = newHeight - height;
+    y -= diff;
+    height = newHeight;
+  }
+  if (direction.includes('s')) {
+    height = clamp(height + delta.y, minSize, Infinity);
+  }
+  if (direction.includes('w')) {
+    const newWidth = clamp(width - delta.x, minSize, Infinity);
+    const diff = newWidth - width;
+    x -= diff;
+    width = newWidth;
+  }
+  if (direction.includes('e')) {
+    width = clamp(width + delta.x, minSize, Infinity);
+  }
+  asset.x = x;
+  asset.y = y;
+  asset.width = width;
+  asset.height = height;
 }
 
 function getTailBase(bubble) {
@@ -2145,6 +2412,7 @@ function autoFitBubbleToText(bubble, options = {}) {
 function updateControlsFromSelection() {
   const bubble = getSelectedBubble();
   const freeText = getSelectedFreeText();
+  const asset = getSelectedAsset();
   const hasBubbleSelection = Boolean(bubble);
   elements.removeBubble.disabled = !hasBubbleSelection;
   updateBubblePanelPlacementButton();
@@ -2191,6 +2459,12 @@ function updateControlsFromSelection() {
       setBubblePositionIndicator(null);
     }
   }
+
+  if (!asset) {
+    setAssetPositionIndicator(null);
+  }
+
+  refreshPositionIndicator();
 }
 
 function applyInlineEditorStyling(bubble) {
@@ -2394,6 +2668,7 @@ function updateBubblePanelPlacementButton() {
 function render() {
   cleanupBubblePanelAttachments();
   renderPanels();
+  renderAssets();
   renderBubbles();
   renderFreeTexts();
   updateSelectionOverlay();
@@ -3293,6 +3568,32 @@ function performPanelSplit(panel, orientation, splitPoint) {
   return false;
 }
 
+function renderAssets() {
+  const layer = elements.assetLayer;
+  if (!layer) return;
+  layer.innerHTML = '';
+  const selectedId = state.selectedAssetId;
+  state.assets.forEach((asset) => {
+    if (!asset || !asset.src) return;
+    const container = document.createElement('div');
+    container.className = 'asset-item';
+    container.dataset.assetId = asset.id;
+    container.style.left = `${asset.x}px`;
+    container.style.top = `${asset.y}px`;
+    container.style.width = `${asset.width}px`;
+    container.style.height = `${asset.height}px`;
+    if (asset.id === selectedId) {
+      container.classList.add('is-selected');
+    }
+    const img = document.createElement('img');
+    img.src = asset.src;
+    img.alt = '';
+    img.draggable = false;
+    container.appendChild(img);
+    layer.appendChild(container);
+  });
+}
+
 function renderBubbles() {
   const layer = elements.bubbleLayer;
   layer.innerHTML = '';
@@ -3903,11 +4204,22 @@ function getOverlayRect(bubble) {
   };
 }
 
+function getAssetOverlayRect(asset) {
+  return {
+    x: asset.x,
+    y: asset.y,
+    width: asset.width,
+    height: asset.height,
+  };
+}
+
 function updateSelectionOverlay() {
   const bubble = getSelectedBubble();
-  if (!bubble) {
+  const asset = bubble ? null : getSelectedAsset();
+  if (!bubble && !asset) {
     elements.selectionOverlay.classList.add('hidden');
     setBubblePositionIndicator(null);
+    setAssetPositionIndicator(null);
     if (overlay.tailHandle) {
       overlay.tailHandle.style.display = 'none';
     }
@@ -3916,21 +4228,18 @@ function updateSelectionOverlay() {
   }
   elements.selectionOverlay.classList.remove('hidden');
 
-  // ✅ 叠加层是否已跟随场景 transform（我们在 updateSceneTransform 里设置过）
   const overlayFollowsScene =
     !!(elements.selectionOverlay && elements.selectionOverlay.style.transform);
 
-  const overlayRect = getOverlayRect(bubble);
+  const overlayRect = bubble ? getOverlayRect(bubble) : getAssetOverlayRect(asset);
 
   let left, top, width, height;
   if (overlayFollowsScene) {
-    // 叠加层已被同一 transform 作用：直接用世界坐标（避免二次换算导致错位）
     left = overlayRect.x;
     top = overlayRect.y;
     width = overlayRect.width;
     height = overlayRect.height;
   } else {
-    // 叠加层未随场景变换：继续用原来的 world→screen 转换
     const topLeft = worldToScreen({ x: overlayRect.x, y: overlayRect.y });
     const bottomRight = worldToScreen({ x: overlayRect.x + overlayRect.width, y: overlayRect.y + overlayRect.height });
     left = topLeft.x;
@@ -3946,26 +4255,35 @@ function updateSelectionOverlay() {
 
   HANDLE_DIRECTIONS.forEach((dir) => {
     const handle = overlay.handles.get(dir);
-    const position = computeHandlePosition(bubble, dir);
+    const position = bubble
+      ? computeHandlePosition(bubble, dir)
+      : computeAssetHandlePosition(asset, dir);
     const pt = overlayFollowsScene ? position : worldToScreen(position);
     handle.style.left = `${pt.x}px`;
     handle.style.top = `${pt.y}px`;
   });
 
-  if (bubble.type === 'speech-pro-5deg') {
-    overlay.tailHandle.style.display = 'none';
-  } else if (bubble.tail) {
-    overlay.tailHandle.style.display = 'block';
-    const tailTip = getTailTip(bubble);
-    const pt = overlayFollowsScene ? tailTip : worldToScreen(tailTip);
-    overlay.tailHandle.style.left = `${pt.x}px`;
-    overlay.tailHandle.style.top = `${pt.y}px`;
+  if (bubble) {
+    if (bubble.type === 'speech-pro-5deg') {
+      overlay.tailHandle.style.display = 'none';
+    } else if (bubble.tail) {
+      overlay.tailHandle.style.display = 'block';
+      const tailTip = getTailTip(bubble);
+      const pt = overlayFollowsScene ? tailTip : worldToScreen(tailTip);
+      overlay.tailHandle.style.left = `${pt.x}px`;
+      overlay.tailHandle.style.top = `${pt.y}px`;
+    } else {
+      overlay.tailHandle.style.display = 'none';
+    }
+    renderPro5degHandles(bubble);
+    setBubblePositionIndicator(bubble);
+    setAssetPositionIndicator(null);
   } else {
     overlay.tailHandle.style.display = 'none';
+    removePro5Handles();
+    setBubblePositionIndicator(null);
+    setAssetPositionIndicator(asset);
   }
-
-  renderPro5degHandles(bubble);
-  setBubblePositionIndicator(bubble);
 }
 
 function ensurePro5Handle(type, color) {
@@ -4088,6 +4406,41 @@ function computeHandlePosition(bubble, direction) {
   return pos;
 }
 
+function computeAssetHandlePosition(asset, direction) {
+  const rect = {
+    left: asset.x,
+    right: asset.x + asset.width,
+    top: asset.y,
+    bottom: asset.y + asset.height,
+    centerX: asset.x + asset.width / 2,
+    centerY: asset.y + asset.height / 2,
+  };
+  const pos = { x: rect.centerX, y: rect.centerY };
+  if (direction.includes('n')) pos.y = rect.top;
+  if (direction.includes('s')) pos.y = rect.bottom;
+  if (direction.includes('w')) pos.x = rect.left;
+  if (direction.includes('e')) pos.x = rect.right;
+  if (direction === 'n' || direction === 's') pos.x = rect.centerX;
+  if (direction === 'e' || direction === 'w') pos.y = rect.centerY;
+  if (direction === 'nw') {
+    pos.x = rect.left;
+    pos.y = rect.top;
+  }
+  if (direction === 'ne') {
+    pos.x = rect.right;
+    pos.y = rect.top;
+  }
+  if (direction === 'se') {
+    pos.x = rect.right;
+    pos.y = rect.bottom;
+  }
+  if (direction === 'sw') {
+    pos.x = rect.left;
+    pos.y = rect.bottom;
+  }
+  return pos;
+}
+
 function handleKeyDown(event) {
   const target = event.target;
   const isTextInput =
@@ -4121,6 +4474,10 @@ function handleKeyDown(event) {
       event.preventDefault();
       return;
     }
+    if (removeSelectedAsset()) {
+      event.preventDefault();
+      return;
+    }
     removeSelectedBubble();
   }
   if (isModifierActive && event.key.toLowerCase() === 'z') {
@@ -4133,8 +4490,10 @@ function pushHistory() {
   const snapshot = JSON.stringify({
     bubbles: state.bubbles,
     freeTexts: state.freeTexts,
+    assets: state.assets,
     selectedBubbleId: state.selectedBubbleId,
     selectedFreeTextId: state.selectedFreeTextId,
+    selectedAssetId: state.selectedAssetId,
     viewport: state.viewport,
     pageFrame: clonePageFrame(state.pageFrame),
   });
@@ -4155,8 +4514,12 @@ function undo() {
   state.freeTexts = Array.isArray(snapshot.freeTexts)
     ? snapshot.freeTexts.map((text) => ({ ...text }))
     : [];
+  state.assets = Array.isArray(snapshot.assets)
+    ? snapshot.assets.map((asset) => ({ ...asset }))
+    : [];
   state.selectedBubbleId = snapshot.selectedBubbleId;
   state.selectedFreeTextId = snapshot.selectedFreeTextId ?? null;
+  state.selectedAssetId = snapshot.selectedAssetId ?? null;
   state.viewport = { ...snapshot.viewport };
   restorePageFrame(snapshot.pageFrame);
   updateSceneTransform();
