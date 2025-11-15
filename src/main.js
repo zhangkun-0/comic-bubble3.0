@@ -538,10 +538,11 @@ function getBubbleDisplayText(bubble) {
       getTextRect(bubble).width,
       true
     );
-    return lines.join('\n');
+    return pro5_fixLeadingPunctuation(lines).join('\n');
   }
   // 兜底逻辑（防止 pro5_domWrapLines 不可用）
-  return pro5_wrapTextChinese(String(bubble.text || ''), state.pro5_charsPerLine).join('\n');
+  const fallbackLines = pro5_wrapTextChinese(String(bubble.text || ''), state.pro5_charsPerLine);
+  return pro5_fixLeadingPunctuation(fallbackLines).join('\n');
 }
  // === pro5_: 在右侧挂载三个控件（四挡间距、自动换行、每行字数） ===
 function pro5_mountRightPanelControls() {
@@ -1173,7 +1174,7 @@ async function pro5_drawBubbleTextsOnCanvas(ctx) {
 
     // 计算换行
     const innerW = Math.max(2, rect.width);
-    const lines = pro5_wrapLines(ctx, text, innerW);
+    const lines = pro5_fixLeadingPunctuation(pro5_wrapLines(ctx, text, innerW));
     if (!lines.length) {
       ctx.restore();
       continue;
@@ -1208,9 +1209,10 @@ function pro5_fitBubbleToText(bubble) {
   // 1) 计算行
   const raw = String(bubble.text || '');
   const cpl = Math.max(4, Math.min(10, state.pro5_charsPerLine|0));
-  const lines = (typeof pro5_wrapTextChinese === 'function')
+  const rawLines = (typeof pro5_wrapTextChinese === 'function')
     ? pro5_wrapTextChinese(raw, cpl)
     : raw.split('\n');
+  const lines = pro5_fixLeadingPunctuation(rawLines);
   // 2) 量宽度
   const fontSize = Math.max(10, bubble.fontSize || 20);
   const lineHeight = Math.round(fontSize * 1.2);
@@ -1260,6 +1262,24 @@ function pro5_sanitizeText(text) {
   return s;
 }
 // === pro5_: 用与编辑端相同的 CSS 在隐藏 DOM 中获得逐行文本（所见即所得） ===
+function pro5_fixLeadingPunctuation(lines) {
+  if (!Array.isArray(lines)) return [];
+  const fixed = lines.map((line) => (line == null ? '' : String(line)));
+  for (let i = 1; i < fixed.length; i += 1) {
+    let current = fixed[i];
+    while (current && /[，。,．\.、！？!?；;]/.test(current[0])) {
+      fixed[i - 1] = (fixed[i - 1] || '') + current[0];
+      current = current.slice(1);
+    }
+    fixed[i] = current;
+    if (!fixed[i]) {
+      fixed.splice(i, 1);
+      i -= 1;
+    }
+  }
+  return fixed;
+}
+
 function pro5_domWrapLines(text, fontFamily, fontSize, bold, maxWidth, autoWrapEnabled) {
   const host = document.createElement('div');
   host.style.cssText = `
@@ -4772,7 +4792,8 @@ function drawBubblesToContext(ctx, options = {}) {
       const lineHeight = Math.round(fontSize * 1.2);
          // 用编辑端同源的“显示文本”（已按规则转为 \n）
       const displayText = getBubbleDisplayText(bubble);
-      const lines = displayText ? displayText.split('\n') : [''];
+      const rawLines = displayText ? displayText.split('\n') : [''];
+      const lines = pro5_fixLeadingPunctuation(rawLines);
       ctx.fillStyle = textColor;
       ctx.font = `${bubble.bold ? 'bold ' : ''}${fontSize}px ${bubble.fontFamily}`;
       
@@ -4801,7 +4822,7 @@ function drawFreeTextsToCanvas(ctx) {
   list.forEach((freeText) => {
     const text = normalizeFreeTextText(freeText.text);
     if (!text) return;
-    const lines = text.split('\n');
+    const lines = pro5_fixLeadingPunctuation(text.split('\n'));
     if (!lines.length) return;
 
     const rotation = normalizeDegrees(freeText.rotation || 0);
@@ -4999,8 +5020,15 @@ async function buildTextLayer(bubble) {
   const fontSize = Math.max(10, bubble.fontSize || 34);
   const lineHeight = Math.round(fontSize * 1.2);
     // 与编辑端一致：用 DOM 实际换行获得逐行文本
-  const lines = pro5_domWrapLines(
-    bubble.text, bubble.fontFamily, fontSize, bubble.bold, rw, state.pro5_autoWrapEnabled
+  const lines = pro5_fixLeadingPunctuation(
+    pro5_domWrapLines(
+      bubble.text,
+      bubble.fontFamily,
+      fontSize,
+      bubble.bold,
+      rw,
+      state.pro5_autoWrapEnabled,
+    ),
   );
   textCtx.save();
   textCtx.beginPath();
@@ -5601,7 +5629,16 @@ async function exportPsdWithAgPsd() {
       if (text) {
         const rect = getTextRect(bubble);
         if (rect) {
-          const lines = pro5_domWrapLines(text, bubble.fontFamily, bubble.fontSize, bubble.bold, Math.max(1, Math.round(rect.width)), state.pro5_autoWrapEnabled);
+          const lines = pro5_fixLeadingPunctuation(
+            pro5_domWrapLines(
+              text,
+              bubble.fontFamily,
+              bubble.fontSize,
+              bubble.bold,
+              Math.max(1, Math.round(rect.width)),
+              state.pro5_autoWrapEnabled,
+            ),
+          );
           const display = lines.join('\n');
           const colorHex = getBubbleTextColor(bubble);
           const toRgb = (h) => { if(!h) return {r:0,g:0,b:0}; h=String(h).replace('#',''); if(h.length===3) return {r:parseInt(h[0]+h[0],16),g:parseInt(h[1]+h[1],16),b:parseInt(h[2]+h[2],16)}; return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)} };
