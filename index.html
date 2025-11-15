@@ -48,6 +48,23 @@
           >放入漫画格</button>
         </div>
 
+        <div class="section">
+          <button
+            id="import-asset"
+            class="secondary"
+            type="button"
+            data-i18n="importAsset"
+          >导入素材图</button>
+        </div>
+
+        <input
+          id="hidden-asset-input"
+          class="visually-hidden-input"
+          type="file"
+          accept="image/png,image/jpeg"
+          multiple
+        />
+
         <div class="section" id="panel-controls">
           <h2 data-i18n="panelSectionTitle">漫画分格</h2>
 
@@ -119,6 +136,7 @@
               <svg id="panel-svg" xmlns="http://www.w3.org/2000/svg"></svg>
               <div id="panel-image-layer"></div>
             </div>
+            <div id="asset-layer"></div>
             <svg id="bubble-layer" xmlns="http://www.w3.org/2000/svg"></svg>
             <div id="free-text-layer"></div>
           </div>
