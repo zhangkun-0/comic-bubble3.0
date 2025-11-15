@@ -63,6 +63,8 @@ const BUBBLE_TEXT_LIGHT = '#ffffff';
 const FREE_TEXT_STROKE_WIDTH = 4;
 const FREE_TEXT_DEFAULT_STYLE = 'dark';
 const ASSET_MIN_SIZE = 32;
+const MAX_HISTORY_LENGTH = 16; // current state + 15 undo steps
+const MAX_ASSET_CACHE_SIZE = 24;
 const assetImageCache = new Map();
 
 const state = {
@@ -110,6 +112,49 @@ const state = {
   panelImageTargetId: null,
   panelClipboard: null,
 };
+
+function storeAssetImageInCache(src, value, options = {}) {
+  if (!src) return;
+  if (assetImageCache.has(src)) {
+    assetImageCache.delete(src);
+  }
+  assetImageCache.set(src, value);
+  if (!options.skipPrune) {
+    pruneAssetCache();
+  }
+}
+
+function pruneAssetCache() {
+  const activeSrcs = new Set();
+  state.assets.forEach((asset) => {
+    if (asset && typeof asset.src === 'string' && asset.src) {
+      activeSrcs.add(asset.src);
+    }
+  });
+
+  Array.from(assetImageCache.entries()).forEach(([src, cached]) => {
+    if (activeSrcs.has(src)) {
+      return;
+    }
+    if (cached instanceof HTMLImageElement) {
+      cached.src = '';
+    }
+    assetImageCache.delete(src);
+  });
+
+  const limit = Math.max(MAX_ASSET_CACHE_SIZE, activeSrcs.size);
+  while (assetImageCache.size > limit) {
+    const oldestKey = assetImageCache.keys().next().value;
+    if (oldestKey == null) {
+      break;
+    }
+    const cached = assetImageCache.get(oldestKey);
+    if (cached instanceof HTMLImageElement) {
+      cached.src = '';
+    }
+    assetImageCache.delete(oldestKey);
+  }
+}
 
 const overlay = {
   box: null,
@@ -748,7 +793,7 @@ function createAssetFromDataUrl(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      assetImageCache.set(dataUrl, img);
+      storeAssetImageInCache(dataUrl, img, { skipPrune: true });
       createAssetFromImage(dataUrl, img.naturalWidth, img.naturalHeight);
       resolve();
     };
@@ -782,6 +827,7 @@ function createAssetFromImage(dataUrl, naturalWidth, naturalHeight) {
     height,
   };
   state.assets.push(asset);
+  pruneAssetCache();
   setSelectedAsset(asset.id);
   pushHistory();
   render();
@@ -1749,6 +1795,7 @@ function removeSelectedAsset() {
   const asset = getSelectedAsset();
   if (!asset) return false;
   state.assets = state.assets.filter((item) => item.id !== asset.id);
+  pruneAssetCache();
   state.selectedAssetId = null;
   pushHistory();
   render();
@@ -4499,8 +4546,19 @@ function pushHistory() {
     viewport: state.viewport,
     pageFrame: clonePageFrame(state.pageFrame),
   });
-  state.history = state.history.slice(0, state.historyIndex + 1);
+  const truncateIndex = state.historyIndex + 1;
+  if (truncateIndex < state.history.length) {
+    state.history.splice(truncateIndex);
+  }
+  const lastSnapshot = state.history[state.history.length - 1];
+  if (lastSnapshot === snapshot) {
+    return;
+  }
   state.history.push(snapshot);
+  if (state.history.length > MAX_HISTORY_LENGTH) {
+    const excess = state.history.length - MAX_HISTORY_LENGTH;
+    state.history.splice(0, excess);
+  }
   state.historyIndex = state.history.length - 1;
 }
 
@@ -4519,6 +4577,7 @@ function undo() {
   state.assets = Array.isArray(snapshot.assets)
     ? snapshot.assets.map((asset) => ({ ...asset }))
     : [];
+  pruneAssetCache();
   state.selectedBubbleId = snapshot.selectedBubbleId;
   state.selectedFreeTextId = snapshot.selectedFreeTextId ?? null;
   state.selectedAssetId = snapshot.selectedAssetId ?? null;
@@ -4608,7 +4667,7 @@ function ensureAssetImage(src) {
   const promise = new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      assetImageCache.set(src, img);
+      storeAssetImageInCache(src, img);
       resolve(img);
     };
     img.onerror = (event) => {
