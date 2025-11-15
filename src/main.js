@@ -63,6 +63,7 @@ const BUBBLE_TEXT_LIGHT = '#ffffff';
 const FREE_TEXT_STROKE_WIDTH = 4;
 const FREE_TEXT_DEFAULT_STYLE = 'dark';
 const ASSET_MIN_SIZE = 32;
+const assetImageCache = new Map();
 
 const state = {
   canvas: { width: 1200, height: 1600 },
@@ -747,6 +748,7 @@ function createAssetFromDataUrl(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
+      assetImageCache.set(dataUrl, img);
       createAssetFromImage(dataUrl, img.naturalWidth, img.naturalHeight);
       resolve();
     };
@@ -4587,6 +4589,57 @@ async function drawImageToCanvas(ctx, src, width, height) {
   ctx.drawImage(img, 0, 0, width, height);
 }
 
+function getCachedAssetImage(src) {
+  const cached = assetImageCache.get(src);
+  return cached instanceof HTMLImageElement ? cached : null;
+}
+
+function ensureAssetImage(src) {
+  if (!src) {
+    return Promise.reject(new Error('缺少素材图像地址'));
+  }
+  const cached = assetImageCache.get(src);
+  if (cached instanceof HTMLImageElement) {
+    return Promise.resolve(cached);
+  }
+  if (cached && typeof cached.then === 'function') {
+    return cached;
+  }
+  const promise = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      assetImageCache.set(src, img);
+      resolve(img);
+    };
+    img.onerror = (event) => {
+      assetImageCache.delete(src);
+      reject(event instanceof Error ? event : new Error('素材图像加载失败'));
+    };
+    img.src = src;
+  });
+  assetImageCache.set(src, promise);
+  return promise;
+}
+
+async function pro5_drawAssetsToCanvas(ctx) {
+  if (!ctx) return;
+  const list = Array.isArray(state.assets) ? state.assets : [];
+  if (!list.length) return;
+
+  for (const asset of list) {
+    if (!asset || !asset.src) continue;
+    try {
+      const img = getCachedAssetImage(asset.src) || (await ensureAssetImage(asset.src));
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(img, asset.x, asset.y, asset.width, asset.height);
+      ctx.restore();
+    } catch (error) {
+      console.warn('导出素材图失败，已跳过。', error);
+    }
+  }
+}
+
 function drawBubblesToContext(ctx, options = {}) {
   const { includeText = true, includeBodies = true } = options;
   const pf = state.pageFrame;
@@ -5237,14 +5290,19 @@ async function pro5_renderCanvasFromStateAsync(options = {}) {
   // 2) 尺寸
   const W = canvas.width, H = canvas.height;
 
-  // 3) 叠加气泡外形（导出时已在克隆 SVG 里移除了 foreignObject 与黄线）
+  // 3) 叠加素材图片，保持与编辑时相同的图层顺序
+  try { await pro5_drawAssetsToCanvas(ctx); }
+  catch (e) { console.warn('pro5_: 素材图绘制失败，已跳过。', e); }
+
+  // 4) 叠加气泡外形（导出时已在克隆 SVG 里移除了 foreignObject 与黄线）
   try { await pro5_rasterizeBubbleLayerToCanvas(ctx, W, H); }
   catch (e) { console.warn('pro5_: 气泡SVG绘制失败，已跳过。', e); }
 
-  // 4) 叠加对白文字（Canvas 绘制）
+  // 5) 叠加对白文字（Canvas 绘制）
   try { await pro5_drawBubbleTextsOnCanvas(ctx); }
   catch (e) { console.warn('pro5_: 文本绘制失败，已跳过。', e); }
 
+  // 6) 叠加自由文字
   try { drawFreeTextsToCanvas(ctx); }
   catch (e) { console.warn('free text 绘制失败，已跳过。', e); }
 
