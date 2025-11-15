@@ -538,10 +538,11 @@ function getBubbleDisplayText(bubble) {
       getTextRect(bubble).width,
       true
     );
-    return lines.join('\n');
+    return pro5_fixLeadingPunctuation(lines).join('\n');
   }
   // 兜底逻辑（防止 pro5_domWrapLines 不可用）
-  return pro5_wrapTextChinese(String(bubble.text || ''), state.pro5_charsPerLine).join('\n');
+  const fallbackLines = pro5_wrapTextChinese(String(bubble.text || ''), state.pro5_charsPerLine);
+  return pro5_fixLeadingPunctuation(fallbackLines).join('\n');
 }
  // === pro5_: 在右侧挂载三个控件（四挡间距、自动换行、每行字数） ===
 function pro5_mountRightPanelControls() {
@@ -1173,7 +1174,7 @@ async function pro5_drawBubbleTextsOnCanvas(ctx) {
 
     // 计算换行
     const innerW = Math.max(2, rect.width);
-    const lines = pro5_wrapLines(ctx, text, innerW);
+    const lines = pro5_fixLeadingPunctuation(pro5_wrapLines(ctx, text, innerW));
     if (!lines.length) {
       ctx.restore();
       continue;
@@ -1208,9 +1209,10 @@ function pro5_fitBubbleToText(bubble) {
   // 1) 计算行
   const raw = String(bubble.text || '');
   const cpl = Math.max(4, Math.min(10, state.pro5_charsPerLine|0));
-  const lines = (typeof pro5_wrapTextChinese === 'function')
+  const rawLines = (typeof pro5_wrapTextChinese === 'function')
     ? pro5_wrapTextChinese(raw, cpl)
     : raw.split('\n');
+  const lines = pro5_fixLeadingPunctuation(rawLines);
   // 2) 量宽度
   const fontSize = Math.max(10, bubble.fontSize || 20);
   const lineHeight = Math.round(fontSize * 1.2);
@@ -1260,6 +1262,24 @@ function pro5_sanitizeText(text) {
   return s;
 }
 // === pro5_: 用与编辑端相同的 CSS 在隐藏 DOM 中获得逐行文本（所见即所得） ===
+function pro5_fixLeadingPunctuation(lines) {
+  if (!Array.isArray(lines)) return [];
+  const fixed = lines.map((line) => (line == null ? '' : String(line)));
+  for (let i = 1; i < fixed.length; i += 1) {
+    let current = fixed[i];
+    while (current && /[，。,．\.、！？!?；;]/.test(current[0])) {
+      fixed[i - 1] = (fixed[i - 1] || '') + current[0];
+      current = current.slice(1);
+    }
+    fixed[i] = current;
+    if (!fixed[i]) {
+      fixed.splice(i, 1);
+      i -= 1;
+    }
+  }
+  return fixed;
+}
+
 function pro5_domWrapLines(text, fontFamily, fontSize, bold, maxWidth, autoWrapEnabled) {
   const host = document.createElement('div');
   host.style.cssText = `
@@ -4666,6 +4686,7 @@ function ensureAssetImage(src) {
   }
   const promise = new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.onload = () => {
       storeAssetImageInCache(src, img);
       resolve(img);
@@ -4678,6 +4699,17 @@ function ensureAssetImage(src) {
   });
   assetImageCache.set(src, promise);
   return promise;
+}
+
+function pro5_loadImageElement(src) {
+  if (!src) return Promise.reject(new Error('缺少图像地址'));
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = (event) => reject(event instanceof Error ? event : new Error('图像加载失败'));
+    img.src = src;
+  });
 }
 
 async function pro5_drawAssetsToCanvas(ctx) {
@@ -4772,7 +4804,8 @@ function drawBubblesToContext(ctx, options = {}) {
       const lineHeight = Math.round(fontSize * 1.2);
          // 用编辑端同源的“显示文本”（已按规则转为 \n）
       const displayText = getBubbleDisplayText(bubble);
-      const lines = displayText ? displayText.split('\n') : [''];
+      const rawLines = displayText ? displayText.split('\n') : [''];
+      const lines = pro5_fixLeadingPunctuation(rawLines);
       ctx.fillStyle = textColor;
       ctx.font = `${bubble.bold ? 'bold ' : ''}${fontSize}px ${bubble.fontFamily}`;
       
@@ -4799,38 +4832,44 @@ function drawFreeTextsToCanvas(ctx) {
   if (!list.length) return;
 
   list.forEach((freeText) => {
-    const text = normalizeFreeTextText(freeText.text);
-    if (!text) return;
-    const lines = text.split('\n');
-    if (!lines.length) return;
-
-    const rotation = normalizeDegrees(freeText.rotation || 0);
-    const fontSize = Math.max(10, freeText.fontSize || state.fontSize || 32);
-    const fontFamily = freeText.fontFamily || state.fontFamily;
-    const strokeColor = freeText.style === 'light' ? '#000000' : '#ffffff';
-    const fillColor = freeText.style === 'light' ? '#ffffff' : '#000000';
-    const lineHeight = Math.round(fontSize * 1.2);
-    const offsetY = -((lines.length - 1) * lineHeight) / 2;
-
-    ctx.save();
-    ctx.translate(freeText.x, freeText.y);
-    ctx.rotate((rotation * Math.PI) / 180);
-    ctx.font = `700 ${fontSize}px ${fontFamily}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.lineWidth = freeText.strokeWidth || FREE_TEXT_STROKE_WIDTH;
-
-    lines.forEach((line, index) => {
-      const y = offsetY + index * lineHeight;
-      ctx.strokeStyle = strokeColor;
-      ctx.fillStyle = fillColor;
-      ctx.strokeText(line, 0, y);
-      ctx.fillText(line, 0, y);
-    });
-    ctx.restore();
+    pro5_renderSingleFreeText(ctx, freeText);
   });
+}
+
+function pro5_renderSingleFreeText(ctx, freeText) {
+  if (!ctx || !freeText) return false;
+  const text = normalizeFreeTextText(freeText.text);
+  if (!text) return false;
+  const lines = pro5_fixLeadingPunctuation(text.split('\n'));
+  if (!lines.length) return false;
+
+  const rotation = normalizeDegrees(freeText.rotation || 0);
+  const fontSize = Math.max(10, freeText.fontSize || state.fontSize || 32);
+  const fontFamily = freeText.fontFamily || state.fontFamily;
+  const strokeColor = freeText.style === 'light' ? '#000000' : '#ffffff';
+  const fillColor = freeText.style === 'light' ? '#ffffff' : '#000000';
+  const lineHeight = Math.round(fontSize * 1.2);
+  const offsetY = -((lines.length - 1) * lineHeight) / 2;
+
+  ctx.save();
+  ctx.translate(freeText.x, freeText.y);
+  ctx.rotate((rotation * Math.PI) / 180);
+  ctx.font = `700 ${fontSize}px ${fontFamily}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = freeText.strokeWidth || FREE_TEXT_STROKE_WIDTH;
+
+  lines.forEach((line, index) => {
+    const y = offsetY + index * lineHeight;
+    ctx.strokeStyle = strokeColor;
+    ctx.fillStyle = fillColor;
+    ctx.strokeText(line, 0, y);
+    ctx.fillText(line, 0, y);
+  });
+  ctx.restore();
+  return true;
 }
 
 function drawPath(ctx, pathData) {
@@ -4947,12 +4986,22 @@ async function createLayerInfoSection() {
 
 async function buildLayers() {
   const layers = [];
-  const imageLayer = await buildImageLayer();
+  const imageLayer = await buildImageLayer({ includeBaseImage: true });
   if (imageLayer) layers.push(imageLayer);
+  const panelImageLayers = await buildPanelImageLayers();
+  panelImageLayers.forEach((layer) => { if (layer) layers.push(layer); });
+  const panelFrameLayers = buildPanelFrameLayers();
+  panelFrameLayers.forEach((layer) => { if (layer) layers.push(layer); });
+  const assetLayers = await buildAssetLayers();
+  assetLayers.forEach((layer) => { if (layer) layers.push(layer); });
   const bubbleLayer = await buildBubbleLayer();
   if (bubbleLayer) layers.push(bubbleLayer);
   const textLayers = await Promise.all(state.bubbles.map((bubble) => buildTextLayer(bubble)));
   textLayers.forEach((layer) => {
+    if (layer) layers.push(layer);
+  });
+  const freeTextLayers = await buildFreeTextLayers();
+  freeTextLayers.forEach((layer) => {
     if (layer) layers.push(layer);
   });
   return layers;
@@ -4999,8 +5048,15 @@ async function buildTextLayer(bubble) {
   const fontSize = Math.max(10, bubble.fontSize || 34);
   const lineHeight = Math.round(fontSize * 1.2);
     // 与编辑端一致：用 DOM 实际换行获得逐行文本
-  const lines = pro5_domWrapLines(
-    bubble.text, bubble.fontFamily, fontSize, bubble.bold, rw, state.pro5_autoWrapEnabled
+  const lines = pro5_fixLeadingPunctuation(
+    pro5_domWrapLines(
+      bubble.text,
+      bubble.fontFamily,
+      fontSize,
+      bubble.bold,
+      rw,
+      state.pro5_autoWrapEnabled,
+    ),
   );
   textCtx.save();
   textCtx.beginPath();
@@ -5026,6 +5082,120 @@ async function buildTextLayer(bubble) {
   }
   textCtx.restore();
   return buildRasterLayer(`文字-${bubble.id}`, textOnly);
+}
+
+async function buildPanelImageLayers() {
+  const pf = state.pageFrame;
+  if (!pf || !Array.isArray(pf.panels) || !pf.panels.length) return [];
+  const layers = [];
+  for (const panel of pf.panels) {
+    if (!panel || !panel.image || !panel.image.src) continue;
+    const canvas = document.createElement('canvas');
+    canvas.width = state.canvas.width;
+    canvas.height = state.canvas.height;
+    const ctx = canvas.getContext('2d');
+    const painted = await pro5_drawPanelImageToCanvas(ctx, panel);
+    if (!painted) continue;
+    const layer = buildRasterLayer(`格内图-${panel.id}`, canvas);
+    if (layer) layers.push(layer);
+  }
+  return layers;
+}
+
+function buildPanelFrameLayers() {
+  const pf = state.pageFrame;
+  if (!pf || !Array.isArray(pf.panels) || !pf.panels.length) return [];
+  const layers = [];
+  pf.panels.forEach((panel) => {
+    if (!panel) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = state.canvas.width;
+    canvas.height = state.canvas.height;
+    const ctx = canvas.getContext('2d');
+    ctx.strokeStyle = pf.frameColor === 'black' ? '#ffffff' : '#10131c';
+    ctx.lineWidth = pf.lineWidth || 4;
+    ctx.strokeRect(panel.x, panel.y, panel.width, panel.height);
+    const layer = buildRasterLayer(`格框-${panel.id}`, canvas);
+    if (layer) layers.push(layer);
+  });
+  return layers;
+}
+
+async function buildAssetLayers() {
+  const list = Array.isArray(state.assets) ? state.assets : [];
+  if (!list.length) return [];
+  const layers = [];
+  for (const asset of list) {
+    if (!asset || !asset.src) continue;
+    let img;
+    try {
+      img = await ensureAssetImage(asset.src);
+    } catch (err) {
+      console.warn('导出素材图失败，已跳过。', err);
+      continue;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = state.canvas.width;
+    canvas.height = state.canvas.height;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.translate(asset.x + asset.width / 2, asset.y + asset.height / 2);
+    const rotation = normalizeDegrees(asset.rotation || 0);
+    ctx.rotate((rotation * Math.PI) / 180);
+    ctx.drawImage(img, -asset.width / 2, -asset.height / 2, asset.width, asset.height);
+    ctx.restore();
+    const layer = buildRasterLayer(`素材-${asset.id}`, canvas);
+    if (layer) layers.push(layer);
+  }
+  return layers;
+}
+
+async function buildFreeTextLayers() {
+  const list = Array.isArray(state.freeTexts) ? state.freeTexts : [];
+  if (!list.length) return [];
+  const layers = [];
+  for (const freeText of list) {
+    if (!freeText) continue;
+    const canvas = document.createElement('canvas');
+    canvas.width = state.canvas.width;
+    canvas.height = state.canvas.height;
+    const ctx = canvas.getContext('2d');
+    const rendered = pro5_renderSingleFreeText(ctx, freeText);
+    if (!rendered) continue;
+    const layer = buildRasterLayer(`框外文字-${freeText.id}`, canvas);
+    if (layer) layers.push(layer);
+  }
+  return layers;
+}
+
+async function pro5_drawPanelImageToCanvas(ctx, panel) {
+  if (!ctx || !panel || !panel.image || !panel.image.src) return false;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(panel.x, panel.y, panel.width, panel.height);
+  ctx.clip();
+  let success = false;
+  try {
+    const img = await pro5_loadImageElement(panel.image.src);
+    const scale = panel.image.scale ?? 1;
+    const rotDeg = panel.image.rotation ?? 0;
+    const offX = panel.image.offsetX ?? 0;
+    const offY = panel.image.offsetY ?? 0;
+    const drawWidth = panel.image.width || img.naturalWidth || img.width;
+    const drawHeight = panel.image.height || img.naturalHeight || img.height;
+    const cx = panel.x + panel.width / 2 + offX;
+    const cy = panel.y + panel.height / 2 + offY;
+    ctx.translate(cx, cy);
+    ctx.rotate((rotDeg * Math.PI) / 180);
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+    success = true;
+  } catch (err) {
+    console.warn('绘制格内图片失败，已跳过。', err);
+  } finally {
+    ctx.restore();
+  }
+  return success;
 }
 
 function buildRasterLayer(name, canvas) {
@@ -5485,7 +5655,6 @@ async function exportPsdWithAgPsd() {
   const ag = await import(moduleUrl);
   const writePsd = ag.writePsd || ag.default?.writePsd;
   if (!writePsd) throw new Error('ag-psd writePsd not found');
-  const { createCanvas, Canvas } = await import('https://unpkg.com/canvas-for-psd');
 
   const width = state.canvas.width;
   const height = state.canvas.height;
@@ -5499,20 +5668,24 @@ async function exportPsdWithAgPsd() {
     baseCanvas.width = width;
     baseCanvas.height = height;
     const baseCtx = baseCanvas.getContext('2d');
-    baseCtx.drawImage(elements.baseImage, 0, 0, width, height);
-    const baseData = baseCtx.getImageData(0, 0, width, height);
-    children.push({
-      name: '底图',
-      top: 0, left: 0, right: width, bottom: height,
-      opacity: 255,
-      channels: [{}, {}, {}, {}],
-      imageData: { width, height, data: new Uint8Array(baseData.data.buffer.slice(0)) }
-    });
+    try {
+      await drawImageToCanvas(baseCtx, state.image.src, width, height);
+      const baseData = baseCtx.getImageData(0, 0, width, height);
+      children.push({
+        name: '底图',
+        top: 0, left: 0, right: width, bottom: height,
+        opacity: 255,
+        channels: [{}, {}, {}, {}],
+        imageData: { width, height, data: new Uint8Array(baseData.data.buffer.slice(0)) }
+      });
+    } catch (err) {
+      console.warn('导出底图失败，已跳过。', err);
+    }
   }
 
   // 2) Panel frames and their images
   const pf = state.pageFrame;
-  if (pf?.active && Array.isArray(pf.panels)) {
+  if (pf && Array.isArray(pf.panels) && pf.panels.length) {
     for (const panel of pf.panels) {
       // Panel image layer (if exists)
       if (panel.image && panel.image.src) {
@@ -5520,38 +5693,21 @@ async function exportPsdWithAgPsd() {
         pCanvas.width = width;
         pCanvas.height = height;
         const pCtx = pCanvas.getContext('2d');
-        
-        // Clip to panel bounds
-        pCtx.save();
-        pCtx.beginPath();
-        pCtx.rect(panel.x, panel.y, panel.width, panel.height);
-        pCtx.clip();
-
-        // Draw panel image with transforms
-        const img = new Image();
-        img.src = panel.image.src;
-        const scale = panel.image.scale ?? 1;
-        const rotDeg = panel.image.rotation ?? 0;
-        const offX = panel.image.offsetX ?? 0;
-        const offY = panel.image.offsetY ?? 0;
-
-        const cx = panel.x + panel.width / 2 + offX;
-        const cy = panel.y + panel.height / 2 + offY;
-
-        pCtx.translate(cx, cy);
-        pCtx.rotate((rotDeg * Math.PI) / 180);
-        pCtx.scale(scale, scale);
-        pCtx.drawImage(img, -img.width/2, -img.height/2, img.width, img.height);
-        pCtx.restore();
-
-        const pData = pCtx.getImageData(0, 0, width, height);
-        children.push({
-          name: `格内图-${panel.id}`,
-          top: 0, left: 0, right: width, bottom: height,
-          opacity: 255,
-          channels: [{}, {}, {}, {}],
-          imageData: { width, height, data: new Uint8Array(pData.data.buffer.slice(0)) }
-        });
+        const painted = await pro5_drawPanelImageToCanvas(pCtx, panel);
+        if (painted) {
+          try {
+            const pData = pCtx.getImageData(0, 0, width, height);
+            children.push({
+              name: `格内图-${panel.id}`,
+              top: 0, left: 0, right: width, bottom: height,
+              opacity: 255,
+              channels: [{}, {}, {}, {}],
+              imageData: { width, height, data: new Uint8Array(pData.data.buffer.slice(0)) }
+            });
+          } catch (err) {
+            console.warn('读取格内图片像素失败，已跳过。', err);
+          }
+        }
       }
 
       // Panel frame layer
@@ -5559,22 +5715,26 @@ async function exportPsdWithAgPsd() {
       frameCanvas.width = width;
       frameCanvas.height = height;
       const frameCtx = frameCanvas.getContext('2d');
-      frameCtx.strokeStyle = '#10131c';
+      frameCtx.strokeStyle = pf.frameColor === 'black' ? '#ffffff' : '#10131c';
       frameCtx.lineWidth = pf.lineWidth || 4;
       frameCtx.strokeRect(panel.x, panel.y, panel.width, panel.height);
-      const frameData = frameCtx.getImageData(0, 0, width, height);
-      children.push({
-        name: `格框-${panel.id}`,
-        top: Math.round(panel.y),
-        left: Math.round(panel.x),
-        right: Math.round(panel.x + panel.width),
-        bottom: Math.round(panel.y + panel.height),
-        opacity: 255,
-        visible: true,
-        clipping: false,
-        channels: [{}, {}, {}, {}],
-        imageData: { width, height, data: new Uint8Array(frameData.data.buffer.slice(0)) }
-      });
+      try {
+        const frameData = frameCtx.getImageData(0, 0, width, height);
+        children.push({
+          name: `格框-${panel.id}`,
+          top: Math.round(panel.y),
+          left: Math.round(panel.x),
+          right: Math.round(panel.x + panel.width),
+          bottom: Math.round(panel.y + panel.height),
+          opacity: 255,
+          visible: true,
+          clipping: false,
+          channels: [{}, {}, {}, {}],
+          imageData: { width, height, data: new Uint8Array(frameData.data.buffer.slice(0)) }
+        });
+      } catch (err) {
+        console.warn('导出格框失败，已跳过。', err);
+      }
     }
   }
 
@@ -5601,7 +5761,16 @@ async function exportPsdWithAgPsd() {
       if (text) {
         const rect = getTextRect(bubble);
         if (rect) {
-          const lines = pro5_domWrapLines(text, bubble.fontFamily, bubble.fontSize, bubble.bold, Math.max(1, Math.round(rect.width)), state.pro5_autoWrapEnabled);
+          const lines = pro5_fixLeadingPunctuation(
+            pro5_domWrapLines(
+              text,
+              bubble.fontFamily,
+              bubble.fontSize,
+              bubble.bold,
+              Math.max(1, Math.round(rect.width)),
+              state.pro5_autoWrapEnabled,
+            ),
+          );
           const display = lines.join('\n');
           const colorHex = getBubbleTextColor(bubble);
           const toRgb = (h) => { if(!h) return {r:0,g:0,b:0}; h=String(h).replace('#',''); if(h.length===3) return {r:parseInt(h[0]+h[0],16),g:parseInt(h[1]+h[1],16),b:parseInt(h[2]+h[2],16)}; return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)} };
@@ -5656,6 +5825,61 @@ async function exportPsdWithAgPsd() {
           };
           children.push(textLayer);
         }
+      }
+    }
+  }
+
+  // 4) Imported assets
+  if (Array.isArray(state.assets)) {
+    for (const asset of state.assets) {
+      if (!asset || !asset.src) continue;
+      const assetCanvas = document.createElement('canvas');
+      assetCanvas.width = width;
+      assetCanvas.height = height;
+      const assetCtx = assetCanvas.getContext('2d');
+      try {
+        const img = await ensureAssetImage(asset.src);
+        assetCtx.save();
+        assetCtx.translate(asset.x + asset.width / 2, asset.y + asset.height / 2);
+        const rotation = normalizeDegrees(asset.rotation || 0);
+        assetCtx.rotate((rotation * Math.PI) / 180);
+        assetCtx.drawImage(img, -asset.width / 2, -asset.height / 2, asset.width, asset.height);
+        assetCtx.restore();
+        const assetData = assetCtx.getImageData(0, 0, width, height);
+        children.push({
+          name: `素材-${asset.id}`,
+          top: 0, left: 0, right: width, bottom: height,
+          opacity: 255,
+          channels: [{}, {}, {}, {}],
+          imageData: { width, height, data: new Uint8Array(assetData.data.buffer.slice(0)) }
+        });
+      } catch (err) {
+        console.warn('导出素材图失败，已跳过。', err);
+      }
+    }
+  }
+
+  // 5) Outer free texts
+  if (Array.isArray(state.freeTexts)) {
+    for (const freeText of state.freeTexts) {
+      if (!freeText) continue;
+      const textCanvas = document.createElement('canvas');
+      textCanvas.width = width;
+      textCanvas.height = height;
+      const textCtx = textCanvas.getContext('2d');
+      const rendered = pro5_renderSingleFreeText(textCtx, freeText);
+      if (!rendered) continue;
+      try {
+        const freeData = textCtx.getImageData(0, 0, width, height);
+        children.push({
+          name: `框外文字-${freeText.id}`,
+          top: 0, left: 0, right: width, bottom: height,
+          opacity: 255,
+          channels: [{}, {}, {}, {}],
+          imageData: { width, height, data: new Uint8Array(freeData.data.buffer.slice(0)) }
+        });
+      } catch (err) {
+        console.warn('导出框外文字失败，已跳过。', err);
       }
     }
   }
