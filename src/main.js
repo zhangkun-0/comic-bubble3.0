@@ -5762,13 +5762,13 @@ async function exportPsdWithAgPsd() {
   const children = [];
 
   // 1) 漫画层（白色背景 + 格框 + 格内图片 + 素材）
-  const comicLayer = createAgPsdLayerFromCanvas('comic-layer', comicCanvas);
+  const comicLayer = await buildMergedComicLayerForPsd(width, height);
   if (comicLayer) {
     children.push(comicLayer);
   }
 
   // 2) 气泡外形合并层
-  const mergedBubbleLayer = createAgPsdLayerFromCanvas('bubble-layer', bubbleCanvas);
+  const mergedBubbleLayer = await buildMergedBubbleLayerForPsd(width, height);
   if (mergedBubbleLayer) {
     children.push(mergedBubbleLayer);
   }
@@ -5880,6 +5880,76 @@ async function exportPsdWithAgPsd() {
     console.error('PSD export error:', err);
     throw err;
   }
+}
+
+async function buildMergedComicLayerForPsd(width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const pf = state.pageFrame;
+  const frameColor = pf?.frameColor === 'black' ? '#000000' : '#ffffff';
+
+  ctx.fillStyle = frameColor;
+  ctx.fillRect(0, 0, width, height);
+
+  if (state.image && state.image.src) {
+    try {
+      await drawImageToCanvas(ctx, state.image.src, width, height);
+    } catch (err) {
+      console.warn('导出底图失败，已跳过。', err);
+    }
+  }
+
+  const panels = Array.isArray(pf?.panels) ? pf.panels : [];
+  if (panels.length) {
+    if (pf?.active) {
+      ctx.save();
+      ctx.fillStyle = frameColor;
+      ctx.beginPath();
+      ctx.rect(0, 0, width, height);
+      panels.forEach((panel) => {
+        ctx.rect(panel.x, panel.y, panel.width, panel.height);
+      });
+      ctx.fill('evenodd');
+      ctx.restore();
+    }
+
+    for (const panel of panels) {
+      await pro5_drawPanelImageToCanvas(ctx, panel);
+    }
+
+    ctx.save();
+    ctx.strokeStyle = pf.frameColor === 'black' ? '#ffffff' : '#10131c';
+    ctx.lineWidth = pf.lineWidth || 4;
+    panels.forEach((panel) => {
+      ctx.strokeRect(panel.x, panel.y, panel.width, panel.height);
+    });
+    ctx.restore();
+  }
+
+  try {
+    await pro5_drawAssetsToCanvas(ctx);
+  } catch (err) {
+    console.warn('导出素材图失败，已跳过。', err);
+  }
+
+  return createAgPsdLayerFromCanvas('漫画层', canvas);
+}
+
+async function buildMergedBubbleLayerForPsd(width, height) {
+  if (!Array.isArray(state.bubbles) || state.bubbles.length === 0) {
+    return null;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  drawBubblesToContext(ctx, { includeText: false, includeBodies: true });
+  return createAgPsdLayerFromCanvas('气泡层', canvas);
 }
 
 function createAgPsdLayerFromCanvas(name, canvas) {
