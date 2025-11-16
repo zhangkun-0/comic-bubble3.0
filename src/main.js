@@ -102,7 +102,7 @@ const state = {
     verticalMargin: 60,
     lineWidth: 4,
     horizontalGap: 16,
-    verticalGap: 24,
+    verticalGap: 35,
     frameColor: 'white',
     panels: [],
     nextPanelId: 1,
@@ -941,7 +941,7 @@ function loadImage(dataUrl) {
     state.pageFrame.verticalMargin = Number(elements.panelMarginVertical?.value || state.pageFrame.verticalMargin) || 60;
     state.pageFrame.lineWidth = Number(elements.panelLineWidth?.value || state.pageFrame.lineWidth) || 4;
     state.pageFrame.horizontalGap = Number(elements.panelGapHorizontal?.value || state.pageFrame.horizontalGap) || 16;
-    state.pageFrame.verticalGap = Number(elements.panelGapVertical?.value || state.pageFrame.verticalGap) || 24;
+    state.pageFrame.verticalGap = Number(elements.panelGapVertical?.value || state.pageFrame.verticalGap) || 35;
     state.pageFrame.frameColor = elements.panelFrameColor?.value === 'black' ? 'black' : 'white';
     ensurePageFrameActive();
     renderPanels();
