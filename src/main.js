@@ -83,7 +83,7 @@ const state = {
   defaultStrokeWidth: 2,
   defaultBubbleFillColor: BUBBLE_FILL_DEFAULT,
   fontFamily: elements.fontFamily.value,
-  fontSize: Number(elements.fontSize?.value) || 32,
+  fontSize: Number(elements.fontSize?.value) || 38,
   bold: false,
   history: [],
   historyIndex: -1,
@@ -1094,13 +1094,13 @@ function pro5_getBubbleText(bubble) {
   );
 }
 
-// === pro5_: 计算气泡字体（优先气泡自身样式 -> 控件值 -> 默认为微软雅黑 32px）===
+// === pro5_: 计算气泡字体（优先气泡自身样式 -> 控件值 -> 默认为微软雅黑 38px）===
 function pro5_computeFontForBubble(bubble) {
   const fallbackFamily =
     (elements.fontFamily && elements.fontFamily.value) ||
     "'Microsoft YaHei','微软雅黑',sans-serif";
   const fallbackSize =
-    (elements.fontSize && parseFloat(elements.fontSize.value)) || 32;
+    (elements.fontSize && parseFloat(elements.fontSize.value)) || 38;
   const fallbackBold =
     (typeof state?.textBold === 'boolean' ? state.textBold : false) ||
     !!bubble?.bold;
@@ -1784,7 +1784,7 @@ function createFreeTextAtCenter(text) {
     x = pf.x + pf.width / 2;
     y = pf.y + pf.height / 2;
   }
-  const baseSize = clamp(Number(elements.fontSize?.value) || state.fontSize || 32, 10, 200);
+  const baseSize = clamp(Number(elements.fontSize?.value) || state.fontSize || 38, 10, 200);
   const freeText = {
     id: `free-text-${state.nextFreeTextId++}`,
     text: normalizeFreeTextText(text),
@@ -4844,7 +4844,7 @@ function pro5_renderSingleFreeText(ctx, freeText) {
   if (!lines.length) return false;
 
   const rotation = normalizeDegrees(freeText.rotation || 0);
-  const fontSize = Math.max(10, freeText.fontSize || state.fontSize || 32);
+  const fontSize = Math.max(10, freeText.fontSize || state.fontSize || 38);
   const fontFamily = freeText.fontFamily || state.fontFamily;
   const strokeColor = freeText.style === 'light' ? '#000000' : '#ffffff';
   const fillColor = freeText.style === 'light' ? '#ffffff' : '#000000';
@@ -5159,7 +5159,7 @@ function pro5_buildAgFreeTextLayer(freeText) {
   const lines = pro5_fixLeadingPunctuation(normalized.split('\n'));
   if (!lines.length) return null;
 
-  const fontSize = Math.max(10, freeText.fontSize || state.fontSize || 32);
+  const fontSize = Math.max(10, freeText.fontSize || state.fontSize || 38);
   const fontFamily = freeText.fontFamily || state.fontFamily;
   const measureCanvas = pro5_createExportCanvas(1, 1);
   const measureCtx = measureCanvas.getContext('2d');
