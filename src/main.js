@@ -83,7 +83,7 @@ const state = {
   defaultStrokeWidth: 2,
   defaultBubbleFillColor: BUBBLE_FILL_DEFAULT,
   fontFamily: elements.fontFamily.value,
-  fontSize: 24,
+  fontSize: Number(elements.fontSize?.value) || 32,
   bold: false,
   history: [],
   historyIndex: -1,
@@ -1094,13 +1094,13 @@ function pro5_getBubbleText(bubble) {
   );
 }
 
-// === pro5_: 计算气泡字体（优先气泡自身样式 -> 控件值 -> 默认为微软雅黑 18px）===
+// === pro5_: 计算气泡字体（优先气泡自身样式 -> 控件值 -> 默认为微软雅黑 32px）===
 function pro5_computeFontForBubble(bubble) {
   const fallbackFamily =
     (elements.fontFamily && elements.fontFamily.value) ||
     "'Microsoft YaHei','微软雅黑',sans-serif";
   const fallbackSize =
-    (elements.fontSize && parseFloat(elements.fontSize.value)) || 18;
+    (elements.fontSize && parseFloat(elements.fontSize.value)) || 32;
   const fallbackBold =
     (typeof state?.textBold === 'boolean' ? state.textBold : false) ||
     !!bubble?.bold;
@@ -5662,100 +5662,21 @@ async function exportPsdWithAgPsd() {
   // Build PSD structure with proper layer order and complete metadata
   const children = [];
 
-  // 1) Background layer (if exists)
-  if (state.image && state.image.src) {
-    const baseCanvas = document.createElement('canvas');
-    baseCanvas.width = width;
-    baseCanvas.height = height;
-    const baseCtx = baseCanvas.getContext('2d');
-    try {
-      await drawImageToCanvas(baseCtx, state.image.src, width, height);
-      const baseData = baseCtx.getImageData(0, 0, width, height);
-      children.push({
-        name: '底图',
-        top: 0, left: 0, right: width, bottom: height,
-        opacity: 255,
-        channels: [{}, {}, {}, {}],
-        imageData: { width, height, data: new Uint8Array(baseData.data.buffer.slice(0)) }
-      });
-    } catch (err) {
-      console.warn('导出底图失败，已跳过。', err);
-    }
+  // 1) 漫画层（白色背景 + 格框 + 格内图片 + 素材）
+  const comicLayer = await buildMergedComicLayerForPsd(width, height);
+  if (comicLayer) {
+    children.push(comicLayer);
   }
 
-  // 2) Panel frames and their images
-  const pf = state.pageFrame;
-  if (pf && Array.isArray(pf.panels) && pf.panels.length) {
-    for (const panel of pf.panels) {
-      // Panel image layer (if exists)
-      if (panel.image && panel.image.src) {
-        const pCanvas = document.createElement('canvas');
-        pCanvas.width = width;
-        pCanvas.height = height;
-        const pCtx = pCanvas.getContext('2d');
-        const painted = await pro5_drawPanelImageToCanvas(pCtx, panel);
-        if (painted) {
-          try {
-            const pData = pCtx.getImageData(0, 0, width, height);
-            children.push({
-              name: `格内图-${panel.id}`,
-              top: 0, left: 0, right: width, bottom: height,
-              opacity: 255,
-              channels: [{}, {}, {}, {}],
-              imageData: { width, height, data: new Uint8Array(pData.data.buffer.slice(0)) }
-            });
-          } catch (err) {
-            console.warn('读取格内图片像素失败，已跳过。', err);
-          }
-        }
-      }
-
-      // Panel frame layer
-      const frameCanvas = document.createElement('canvas');
-      frameCanvas.width = width;
-      frameCanvas.height = height;
-      const frameCtx = frameCanvas.getContext('2d');
-      frameCtx.strokeStyle = pf.frameColor === 'black' ? '#ffffff' : '#10131c';
-      frameCtx.lineWidth = pf.lineWidth || 4;
-      frameCtx.strokeRect(panel.x, panel.y, panel.width, panel.height);
-      try {
-        const frameData = frameCtx.getImageData(0, 0, width, height);
-        children.push({
-          name: `格框-${panel.id}`,
-          top: Math.round(panel.y),
-          left: Math.round(panel.x),
-          right: Math.round(panel.x + panel.width),
-          bottom: Math.round(panel.y + panel.height),
-          opacity: 255,
-          visible: true,
-          clipping: false,
-          channels: [{}, {}, {}, {}],
-          imageData: { width, height, data: new Uint8Array(frameData.data.buffer.slice(0)) }
-        });
-      } catch (err) {
-        console.warn('导出格框失败，已跳过。', err);
-      }
-    }
+  // 2) 气泡外形合并层
+  const mergedBubbleLayer = await buildMergedBubbleLayerForPsd(width, height);
+  if (mergedBubbleLayer) {
+    children.push(mergedBubbleLayer);
   }
 
-  // 3) Speech bubbles and text layers
+  // 3) Speech bubble text layers
   if (Array.isArray(state.bubbles)) {
     for (const bubble of state.bubbles) {
-      // Bubble shape layer
-      const bubbleCanvas = document.createElement('canvas');
-      bubbleCanvas.width = width;
-      bubbleCanvas.height = height;
-      const bubbleCtx = bubbleCanvas.getContext('2d');
-      drawBubblesToContext(bubbleCtx, { includeText: false, includeBodies: true });
-      const bubbleData = bubbleCtx.getImageData(0, 0, width, height);
-      children.push({
-        name: `气泡-${bubble.id}`,
-        top: 0, left: 0, right: width, bottom: height,
-        opacity: 255,
-        channels: [{}, {}, {}, {}],
-        imageData: { width, height, data: new Uint8Array(bubbleData.data.buffer.slice(0)) }
-      });
-
       // Text layer with enhanced metadata for Photoshop compatibility
       const text = pro5_getBubbleText(bubble);
       if (text) {
@@ -5829,37 +5750,7 @@ async function exportPsdWithAgPsd() {
     }
   }
 
-  // 4) Imported assets
-  if (Array.isArray(state.assets)) {
-    for (const asset of state.assets) {
-      if (!asset || !asset.src) continue;
-      const assetCanvas = document.createElement('canvas');
-      assetCanvas.width = width;
-      assetCanvas.height = height;
-      const assetCtx = assetCanvas.getContext('2d');
-      try {
-        const img = await ensureAssetImage(asset.src);
-        assetCtx.save();
-        assetCtx.translate(asset.x + asset.width / 2, asset.y + asset.height / 2);
-        const rotation = normalizeDegrees(asset.rotation || 0);
-        assetCtx.rotate((rotation * Math.PI) / 180);
-        assetCtx.drawImage(img, -asset.width / 2, -asset.height / 2, asset.width, asset.height);
-        assetCtx.restore();
-        const assetData = assetCtx.getImageData(0, 0, width, height);
-        children.push({
-          name: `素材-${asset.id}`,
-          top: 0, left: 0, right: width, bottom: height,
-          opacity: 255,
-          channels: [{}, {}, {}, {}],
-          imageData: { width, height, data: new Uint8Array(assetData.data.buffer.slice(0)) }
-        });
-      } catch (err) {
-        console.warn('导出素材图失败，已跳过。', err);
-      }
-    }
-  }
-
-  // 5) Outer free texts
+  // 4) Outer free texts
   if (Array.isArray(state.freeTexts)) {
     for (const freeText of state.freeTexts) {
       if (!freeText) continue;
@@ -5905,6 +5796,93 @@ async function exportPsdWithAgPsd() {
     console.error('PSD export error:', err);
     throw err;
   }
+}
+
+async function buildMergedComicLayerForPsd(width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const pf = state.pageFrame;
+  const frameColor = pf?.frameColor === 'black' ? '#000000' : '#ffffff';
+
+  ctx.fillStyle = frameColor;
+  ctx.fillRect(0, 0, width, height);
+
+  if (state.image && state.image.src) {
+    try {
+      await drawImageToCanvas(ctx, state.image.src, width, height);
+    } catch (err) {
+      console.warn('导出底图失败，已跳过。', err);
+    }
+  }
+
+  const panels = Array.isArray(pf?.panels) ? pf.panels : [];
+  if (panels.length) {
+    if (pf?.active) {
+      ctx.save();
+      ctx.fillStyle = frameColor;
+      ctx.beginPath();
+      ctx.rect(0, 0, width, height);
+      panels.forEach((panel) => {
+        ctx.rect(panel.x, panel.y, panel.width, panel.height);
+      });
+      ctx.fill('evenodd');
+      ctx.restore();
+    }
+
+    for (const panel of panels) {
+      await pro5_drawPanelImageToCanvas(ctx, panel);
+    }
+
+    ctx.save();
+    ctx.strokeStyle = pf.frameColor === 'black' ? '#ffffff' : '#10131c';
+    ctx.lineWidth = pf.lineWidth || 4;
+    panels.forEach((panel) => {
+      ctx.strokeRect(panel.x, panel.y, panel.width, panel.height);
+    });
+    ctx.restore();
+  }
+
+  try {
+    await pro5_drawAssetsToCanvas(ctx);
+  } catch (err) {
+    console.warn('导出素材图失败，已跳过。', err);
+  }
+
+  return createAgPsdLayerFromCanvas('漫画层', canvas);
+}
+
+async function buildMergedBubbleLayerForPsd(width, height) {
+  if (!Array.isArray(state.bubbles) || state.bubbles.length === 0) {
+    return null;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  drawBubblesToContext(ctx, { includeText: false, includeBodies: true });
+  return createAgPsdLayerFromCanvas('气泡层', canvas);
+}
+
+function createAgPsdLayerFromCanvas(name, canvas) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  return {
+    name,
+    top: 0,
+    left: 0,
+    right: width,
+    bottom: height,
+    opacity: 255,
+    channels: [{}, {}, {}, {}],
+    imageData: { width, height, data: new Uint8Array(imageData.data.buffer.slice(0)) },
+  };
 }
 
 
