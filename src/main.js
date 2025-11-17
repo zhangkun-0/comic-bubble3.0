@@ -458,6 +458,7 @@ function pro5_renderCanvasFromState(options = {}) {
       const rotRad  = rotDeg * Math.PI / 180;
       const offX    = pimg.offsetX ?? 0;
       const offY    = pimg.offsetY ?? 0;
+      const saturation = getPanelImageSaturation(pimg);
 
       const cx = panel.x + panel.width  / 2 + offX;
       const cy = panel.y + panel.height / 2 + offY;
@@ -465,11 +466,15 @@ function pro5_renderCanvasFromState(options = {}) {
       ctx.translate(cx, cy);
       ctx.rotate(rotRad);
       ctx.scale(scale, scale);
+      const prevFilter = ctx.filter;
+      ctx.filter = `saturate(${saturation}%)`;
 
       // 将图片中心对齐原点
       const dw = pimg.width;
       const dh = pimg.height;
       ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+
+      ctx.filter = prevFilter;
 
       ctx.restore();
 
