@@ -43,6 +43,7 @@ const elements = {
   panelGapVertical: document.getElementById('panel-gap-vertical'),
   panelFrameColor: document.getElementById('panel-frame-color'),
   panelImageRotation: document.getElementById('panel-image-rotation'),
+  panelImageSaturation: document.getElementById('panel-image-saturation'),
   hiddenPanelImageInput: document.getElementById('hidden-panel-image-input'),
   freeTextLayer: document.getElementById('free-text-layer'),
 };
@@ -192,6 +193,7 @@ const I18N_STRINGS = {
   placeBubble: { zh: '放入漫画格', en: 'Place into Panel' },
   panelSectionTitle: { zh: '漫画分格', en: 'Comic Panels' },
   panelImageRotationLabel: { zh: '格框内图片旋转', en: 'Panel Image Rotation' },
+  panelImageSaturationLabel: { zh: '色彩饱和度', en: 'Image Saturation' },
   panelHint: {
     zh: '在漫画页框内ctrl+鼠标左键拖拽可切分格框，鼠标左键拖动画格，右键拖动格内图。',
     en: 'Inside the comic page, press Ctrl and drag with the left mouse button to split panels. Drag with the left button to move panels and with the right button to move images.',
@@ -456,6 +458,7 @@ function pro5_renderCanvasFromState(options = {}) {
       const rotRad  = rotDeg * Math.PI / 180;
       const offX    = pimg.offsetX ?? 0;
       const offY    = pimg.offsetY ?? 0;
+      const saturation = getPanelImageSaturation(pimg);
 
       const cx = panel.x + panel.width  / 2 + offX;
       const cy = panel.y + panel.height / 2 + offY;
@@ -463,11 +466,15 @@ function pro5_renderCanvasFromState(options = {}) {
       ctx.translate(cx, cy);
       ctx.rotate(rotRad);
       ctx.scale(scale, scale);
+      const prevFilter = ctx.filter;
+      ctx.filter = `saturate(${saturation}%)`;
 
       // 将图片中心对齐原点
       const dw = pimg.width;
       const dh = pimg.height;
       ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+
+      ctx.filter = prevFilter;
 
       ctx.restore();
 
@@ -729,6 +736,7 @@ function attachEvents() {
   elements.panelGapVertical?.addEventListener('change', handlePanelStyleChange);
   elements.panelFrameColor?.addEventListener('change', handlePanelStyleChange);
   elements.panelImageRotation?.addEventListener('input', handlePanelRotationChange);
+  elements.panelImageSaturation?.addEventListener('input', handlePanelSaturationChange);
 
   document.addEventListener('keydown', handleKeyDown);
 }
@@ -2745,6 +2753,15 @@ function render() {
   updateBubblePanelPlacementButton();
 }
 
+function getPanelImageSaturation(image) {
+  const value = Number(image?.saturation);
+  const normalized = Number.isFinite(value) ? clamp(value, 0, 200) : 100;
+  if (image) {
+    image.saturation = normalized;
+  }
+  return normalized;
+}
+
 function updatePanelControlsFromState() {
   const pf = state.pageFrame;
   if (!elements.panelMarginHorizontal) return;
@@ -2756,13 +2773,22 @@ function updatePanelControlsFromState() {
   elements.panelFrameColor.value = pf.frameColor;
 
   const rotationControl = elements.panelImageRotation;
+  const saturationControl = elements.panelImageSaturation;
   const panel = getSelectedPanel();
   if (panel && panel.image) {
     rotationControl.disabled = false;
     rotationControl.value = String(panel.image.rotation || 0);
+    if (saturationControl) {
+      saturationControl.disabled = false;
+      saturationControl.value = String(getPanelImageSaturation(panel.image));
+    }
   } else {
     rotationControl.disabled = true;
     rotationControl.value = '0';
+    if (saturationControl) {
+      saturationControl.disabled = true;
+      saturationControl.value = '100';
+    }
   }
 }
 
@@ -2793,6 +2819,7 @@ function clonePanelData(panel) {
           rotation: panel.image.rotation,
           offsetX: panel.image.offsetX,
           offsetY: panel.image.offsetY,
+          saturation: getPanelImageSaturation(panel.image),
         }
       : null,
   };
@@ -2927,6 +2954,7 @@ function clonePageFrame(frame) {
             rotation: panel.image.rotation,
             offsetX: panel.image.offsetX,
             offsetY: panel.image.offsetY,
+            saturation: getPanelImageSaturation(panel.image),
           }
         : null,
     })),
@@ -2964,12 +2992,13 @@ function restorePageFrame(snapshot) {
       ? {
           src: panel.image.src,
           width: panel.image.width,
-          height: panel.image.height,
-          scale: panel.image.scale,
-          rotation: panel.image.rotation,
-          offsetX: panel.image.offsetX,
-          offsetY: panel.image.offsetY,
-        }
+      height: panel.image.height,
+      scale: panel.image.scale,
+      rotation: panel.image.rotation,
+      offsetX: panel.image.offsetX,
+      offsetY: panel.image.offsetY,
+      saturation: getPanelImageSaturation(panel.image),
+    }
       : null,
   }));
 }
@@ -3082,6 +3111,8 @@ function renderPanelImages() {
     img.style.width = '100%';
     img.style.height = '100%';
     img.style.pointerEvents = 'none';
+    const saturation = getPanelImageSaturation(panel.image);
+    img.style.filter = `saturate(${saturation}%)`;
     wrapper.appendChild(img);
 
     const scale = panel.image.scale ?? 1;
@@ -3187,6 +3218,14 @@ function handlePanelRotationChange() {
   if (!panel || !panel.image) return;
   const value = Number(elements.panelImageRotation.value) || 0;
   panel.image.rotation = clamp(value, -180, 180);
+  renderPanelImages();
+}
+
+function handlePanelSaturationChange() {
+  const panel = getSelectedPanel();
+  if (!panel || !panel.image) return;
+  const value = Number(elements.panelImageSaturation.value);
+  panel.image.saturation = clamp(Number.isFinite(value) ? value : 100, 0, 200);
   renderPanelImages();
 }
 
@@ -3355,6 +3394,7 @@ function handlePanelImageSelection(event) {
         rotation: 0,
         offsetX: 0,
         offsetY: 0,
+        saturation: 100,
       };
       // 守护式检查（可选）：如果你还没加过，可以先确保元素存在
       // if (elements && elements.panelSvg && elements.panelImageLayer) {
@@ -5273,12 +5313,14 @@ async function pro5_drawPanelImageToCanvas(ctx, panel) {
   ctx.rect(panel.x, panel.y, panel.width, panel.height);
   ctx.clip();
   let success = false;
+  const prevFilter = ctx.filter;
   try {
     const img = await pro5_loadImageElement(panel.image.src);
     const scale = panel.image.scale ?? 1;
     const rotDeg = panel.image.rotation ?? 0;
     const offX = panel.image.offsetX ?? 0;
     const offY = panel.image.offsetY ?? 0;
+    const saturation = getPanelImageSaturation(panel.image);
     const drawWidth = panel.image.width || img.naturalWidth || img.width;
     const drawHeight = panel.image.height || img.naturalHeight || img.height;
     const cx = panel.x + panel.width / 2 + offX;
@@ -5286,11 +5328,13 @@ async function pro5_drawPanelImageToCanvas(ctx, panel) {
     ctx.translate(cx, cy);
     ctx.rotate((rotDeg * Math.PI) / 180);
     ctx.scale(scale, scale);
+    ctx.filter = `saturate(${saturation}%)`;
     ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
     success = true;
   } catch (err) {
     console.warn('绘制格内图片失败，已跳过。', err);
   } finally {
+    ctx.filter = prevFilter;
     ctx.restore();
   }
   return success;
