@@ -3765,11 +3765,12 @@ function renderAssets() {
     }
     if (panelsById && asset.panelId != null) {
       const panel = panelsById.get(asset.panelId);
-      if (panel) {
-        const insetTop = Math.max(0, panel.y - asset.y);
-        const insetLeft = Math.max(0, panel.x - asset.x);
-        const insetRight = Math.max(0, asset.x + asset.width - (panel.x + panel.width));
-        const insetBottom = Math.max(0, asset.y + asset.height - (panel.y + panel.height));
+      const inner = panel ? getPanelInnerRect(panel, pf) : null;
+      if (inner) {
+        const insetTop = Math.max(0, inner.y - asset.y);
+        const insetLeft = Math.max(0, inner.x - asset.x);
+        const insetRight = Math.max(0, asset.x + asset.width - (inner.x + inner.width));
+        const insetBottom = Math.max(0, asset.y + asset.height - (inner.y + inner.height));
         container.style.clipPath = `inset(${insetTop}px ${insetRight}px ${insetBottom}px ${insetLeft}px)`;
         container.dataset.panelId = String(panel.id);
       } else {
@@ -4748,6 +4749,17 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function getPanelInnerRect(panel, pageFrame) {
+  if (!panel) return null;
+  const lineWidth = Math.max(0, pageFrame?.lineWidth ?? 0);
+  const inset = lineWidth / 2;
+  const x = panel.x + inset;
+  const y = panel.y + inset;
+  const width = Math.max(0, panel.width - inset * 2);
+  const height = Math.max(0, panel.height - inset * 2);
+  return { x, y, width, height };
+}
+
 //async function exportArtwork() {
   //const format = elements.exportFormat.value;
   //if (!state.image.src && state.bubbles.length === 0) return;
@@ -4863,10 +4875,13 @@ async function pro5_drawAssetsToCanvas(ctx) {
       ctx.save();
       if (panelsById && asset.panelId != null) {
         const panel = panelsById.get(asset.panelId);
-        if (panel) {
+        const inner = panel ? getPanelInnerRect(panel, pf) : null;
+        if (inner && inner.width > 0 && inner.height > 0) {
           ctx.beginPath();
-          ctx.rect(panel.x, panel.y, panel.width, panel.height);
+          ctx.rect(inner.x, inner.y, inner.width, inner.height);
           ctx.clip();
+        } else if (!panel) {
+          continue;
         }
       }
       ctx.imageSmoothingEnabled = true;
