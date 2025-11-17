@@ -692,7 +692,7 @@ function attachEvents() {
   elements.hiddenAssetInput?.addEventListener('change', handleAssetImageSelection);
   elements.insertBubble?.addEventListener('click', insertBubbleFromControls);
   elements.removeBubble?.addEventListener('click', removeSelectedBubble);
-  elements.placeBubbleIntoPanel?.addEventListener('click', placeSelectedBubbleIntoPanel);
+  elements.placeBubbleIntoPanel?.addEventListener('click', placeSelectionIntoPanel);
   elements.strokeWidth?.addEventListener('change', handleStrokeChange);
   elements.bubbleFillColor?.addEventListener('change', handleBubbleFillColorChange);
   elements.fontFamily?.addEventListener('change', handleFontFamilyChange);
@@ -834,6 +834,7 @@ function createAssetFromImage(dataUrl, naturalWidth, naturalHeight) {
     y,
     width,
     height,
+    panelId: null,
   };
   state.assets.push(asset);
   pruneAssetCache();
@@ -1841,8 +1842,19 @@ function removeSelectedBubble() {
   updateControlsFromSelection();
 }
 
-function placeSelectedBubbleIntoPanel() {
+function placeSelectionIntoPanel() {
   const bubble = getSelectedBubble();
+  if (bubble) {
+    placeBubbleIntoPanel(bubble);
+    return;
+  }
+  const asset = getSelectedAsset();
+  if (asset) {
+    placeAssetIntoPanel(asset);
+  }
+}
+
+function placeBubbleIntoPanel(bubble) {
   if (!canPlaceBubbleIntoPanel(bubble)) return;
 
   const pf = state.pageFrame;
@@ -1860,11 +1872,37 @@ function placeSelectedBubbleIntoPanel() {
 
   if (!targetPanel) return;
   if (bubble.panelId === targetPanel.id) {
-    updateBubblePanelPlacementButton();
+    updatePanelPlacementButton();
     return;
   }
 
   bubble.panelId = targetPanel.id;
+  pushHistory();
+  render();
+}
+
+function placeAssetIntoPanel(asset) {
+  if (!canPlaceAssetIntoPanel(asset)) return;
+  const pf = state.pageFrame;
+  const bounds = getAssetVisualBounds(asset);
+  let targetPanel = null;
+  let bestArea = 0;
+
+  pf.panels.forEach((panel) => {
+    const area = rectIntersectionArea(bounds, panel);
+    if (area > bestArea) {
+      bestArea = area;
+      targetPanel = panel;
+    }
+  });
+
+  if (!targetPanel) return;
+  if (asset.panelId === targetPanel.id) {
+    updatePanelPlacementButton();
+    return;
+  }
+
+  asset.panelId = targetPanel.id;
   pushHistory();
   render();
 }
@@ -2492,7 +2530,7 @@ function updateControlsFromSelection() {
   const asset = getSelectedAsset();
   const hasBubbleSelection = Boolean(bubble);
   elements.removeBubble.disabled = !hasBubbleSelection;
-  updateBubblePanelPlacementButton();
+  updatePanelPlacementButton();
   if (!bubble) {
     elements.textContent.value = '';
     if (elements.bubbleFillColor) {
@@ -2706,7 +2744,7 @@ function rectsIntersect(a, b) {
   return rectIntersectionArea(a, b) > 0;
 }
 
-function cleanupBubblePanelAttachments() {
+function cleanupPanelAttachments() {
   const pf = state.pageFrame;
   const panels = pf.active ? pf.panels : [];
   const panelById = new Map(panels.map((panel) => [panel.id, panel]));
@@ -2725,6 +2763,21 @@ function cleanupBubblePanelAttachments() {
       bubble.panelId = null;
     }
   });
+  state.assets.forEach((asset) => {
+    if (asset.panelId == null) {
+      asset.panelId = null;
+      return;
+    }
+    const panel = panelById.get(asset.panelId);
+    if (!panel) {
+      asset.panelId = null;
+      return;
+    }
+    const bounds = getAssetVisualBounds(asset);
+    if (!rectsIntersect(bounds, panel)) {
+      asset.panelId = null;
+    }
+  });
 }
 
 function canPlaceBubbleIntoPanel(bubble) {
@@ -2736,21 +2789,33 @@ function canPlaceBubbleIntoPanel(bubble) {
   return pf.panels.some((panel) => rectsIntersect(bounds, panel));
 }
 
-function updateBubblePanelPlacementButton() {
+function canPlaceAssetIntoPanel(asset) {
+  if (!asset) return false;
+  const pf = state.pageFrame;
+  if (!pf.active || !pf.panels.length) return false;
+  const bounds = getAssetVisualBounds(asset);
+  return pf.panels.some((panel) => rectsIntersect(bounds, panel));
+}
+
+function updatePanelPlacementButton() {
   if (!elements.placeBubbleIntoPanel) return;
   const bubble = getSelectedBubble();
-  elements.placeBubbleIntoPanel.disabled = !canPlaceBubbleIntoPanel(bubble);
+  const asset = bubble ? null : getSelectedAsset();
+  const enabled = bubble
+    ? canPlaceBubbleIntoPanel(bubble)
+    : canPlaceAssetIntoPanel(asset);
+  elements.placeBubbleIntoPanel.disabled = !enabled;
 }
 
 function render() {
-  cleanupBubblePanelAttachments();
+  cleanupPanelAttachments();
   renderPanels();
   renderAssets();
   renderBubbles();
   renderFreeTexts();
   updateSelectionOverlay();
   updatePanelOverlay();
-  updateBubblePanelPlacementButton();
+  updatePanelPlacementButton();
 }
 
 function getPanelImageSaturation(image) {
@@ -3682,6 +3747,10 @@ function renderAssets() {
   if (!layer) return;
   layer.innerHTML = '';
   const selectedId = state.selectedAssetId;
+  const pf = state.pageFrame;
+  const panelsById = pf.active
+    ? new Map(pf.panels.map((panel) => [panel.id, panel]))
+    : null;
   state.assets.forEach((asset) => {
     if (!asset || !asset.src) return;
     const container = document.createElement('div');
@@ -3693,6 +3762,23 @@ function renderAssets() {
     container.style.height = `${asset.height}px`;
     if (asset.id === selectedId) {
       container.classList.add('is-selected');
+    }
+    if (panelsById && asset.panelId != null) {
+      const panel = panelsById.get(asset.panelId);
+      if (panel) {
+        const insetTop = Math.max(0, panel.y - asset.y);
+        const insetLeft = Math.max(0, panel.x - asset.x);
+        const insetRight = Math.max(0, asset.x + asset.width - (panel.x + panel.width));
+        const insetBottom = Math.max(0, asset.y + asset.height - (panel.y + panel.height));
+        container.style.clipPath = `inset(${insetTop}px ${insetRight}px ${insetBottom}px ${insetLeft}px)`;
+        container.dataset.panelId = String(panel.id);
+      } else {
+        container.style.clipPath = '';
+        delete container.dataset.panelId;
+      }
+    } else {
+      container.style.clipPath = '';
+      delete container.dataset.panelId;
     }
     const img = document.createElement('img');
     img.src = asset.src;
@@ -4322,6 +4408,15 @@ function getAssetOverlayRect(asset) {
   };
 }
 
+function getAssetVisualBounds(asset) {
+  return {
+    x: asset.x,
+    y: asset.y,
+    width: asset.width,
+    height: asset.height,
+  };
+}
+
 function updateSelectionOverlay() {
   const bubble = getSelectedBubble();
   const asset = bubble ? null : getSelectedAsset();
@@ -4635,7 +4730,7 @@ function undo() {
     ? snapshot.freeTexts.map((text) => ({ ...text }))
     : [];
   state.assets = Array.isArray(snapshot.assets)
-    ? snapshot.assets.map((asset) => ({ ...asset }))
+    ? snapshot.assets.map((asset) => ({ panelId: null, ...asset, panelId: asset.panelId ?? null }))
     : [];
   pruneAssetCache();
   state.selectedBubbleId = snapshot.selectedBubbleId;
@@ -4756,12 +4851,24 @@ async function pro5_drawAssetsToCanvas(ctx) {
   if (!ctx) return;
   const list = Array.isArray(state.assets) ? state.assets : [];
   if (!list.length) return;
+  const pf = state.pageFrame;
+  const panelsById = pf.active
+    ? new Map(pf.panels.map((panel) => [panel.id, panel]))
+    : null;
 
   for (const asset of list) {
     if (!asset || !asset.src) continue;
     try {
       const img = getCachedAssetImage(asset.src) || (await ensureAssetImage(asset.src));
       ctx.save();
+      if (panelsById && asset.panelId != null) {
+        const panel = panelsById.get(asset.panelId);
+        if (panel) {
+          ctx.beginPath();
+          ctx.rect(panel.x, panel.y, panel.width, panel.height);
+          ctx.clip();
+        }
+      }
       ctx.imageSmoothingEnabled = true;
       ctx.drawImage(img, asset.x, asset.y, asset.width, asset.height);
       ctx.restore();
