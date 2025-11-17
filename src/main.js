@@ -6131,7 +6131,12 @@ function createAgPsdLayerFromCanvas(name, canvas) {
     bottom: height,
     opacity: 255,
     channels: [{}, {}, {}, {}],
-    imageData: { width, height, data: new Uint8Array(imageData.data.buffer.slice(0)) },
+    imageData: {
+      width,
+      height,
+      data: new Uint8Array(imageData.data.buffer.slice(0)),
+      compression: 1,
+    },
   };
 }
 
